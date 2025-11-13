@@ -8,6 +8,11 @@ let userMemosCache = [];
 let allUsersCache = [];
 window.requestsChartInstance = null;
 window.statusChartInstance = null;
+
+// Flag เพื่อป้องกันการตั้งค่า event listeners ซ้ำ
+let editPageListenersSetup = false;
+let globalListenersSetup = false;
+
 let specialPositionMap = {
     'รองผู้อำนวยการกลุ่มบริหารทั่วไป':'นางวชิรินทรา พัฒนกุลเดช',
     'รองผู้อำนวยการกลุ่มบริหารงานบุคคล':'นางปณิชา ภัสสิรากุล',
@@ -19,7 +24,7 @@ let specialPositionMap = {
     'หัวหน้ากลุ่มสาระการเรียนรู้ภาษาไทย': 'นายอานนท์ วรวงค์',
     'หัวหน้ากลุ่มสาระการเรียนรู้ภาษาต่างประเทศ': 'นางธรรมรักษ์ วัฒนพลาชัยกูร',
     'หัวหน้ากลุ่มสาระการเรียนรู้สังคมศึกษา ศาสนา และวัฒนธรรม': 'นางเกศริน ทองโพธิกุล',
-    'หัวหน้ากลุ่มสาระการเรียนรู้สุขศึกษาและพลศึกษา': 'นางสาวเกษร เขจรลาภ',
+    'หัวหน้ากลุ่มสาระการเรียนรู้สุขศึกษาและพลศึกษา': 'نางสาวเกษร เขจรลาภ',
     'หัวหน้ากลุ่มสาระการเรียนรู้ศิลปะ': 'นางสาวปิยลักษณ์ ขันทา',
     'หัวหน้ากลุ่มสาระการเรียนรู้การงานอาชีพ': 'นายสุชาติ สินทร',
     'หัวหน้างานแนะแนว':'นายเริงศักดิ์ จันทร์นวล',
@@ -207,24 +212,49 @@ function getFriendlyErrorMessage(technicalMessage) {
 // --- UTILITY FUNCTIONS ---
 
 function showAlert(title, message) {
-    document.getElementById('alert-modal-title').textContent = title;
-    document.getElementById('alert-modal-message').textContent = message;
-    document.getElementById('alert-modal').style.display = 'flex';
+    const modal = document.getElementById('alert-modal');
+    const titleEl = document.getElementById('alert-modal-title');
+    const messageEl = document.getElementById('alert-modal-message');
+    
+    if (!modal || !titleEl || !messageEl) {
+        console.error('Alert modal elements not found');
+        return;
+    }
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    modal.style.display = 'flex';
 }
 
 function showConfirm(title, message) {
-    document.getElementById('confirm-modal-title').textContent = title;
-    document.getElementById('confirm-modal-message').textContent = message;
-    document.getElementById('confirm-modal').style.display = 'flex';
+    const modal = document.getElementById('confirm-modal');
+    const titleEl = document.getElementById('confirm-modal-title');
+    const messageEl = document.getElementById('confirm-modal-message');
+    
+    if (!modal || !titleEl || !messageEl) {
+        console.error('Confirm modal elements not found');
+        return Promise.resolve(false);
+    }
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    modal.style.display = 'flex';
 
     return new Promise((resolve) => {
         const yesButton = document.getElementById('confirm-modal-yes-button');
         const noButton = document.getElementById('confirm-modal-no-button');
+        
+        if (!yesButton || !noButton) {
+            console.error('Confirm modal buttons not found');
+            resolve(false);
+            return;
+        }
+        
         const onYes = () => { cleanup(); resolve(true); };
         const onNo = () => { cleanup(); resolve(false); };
         
         const cleanup = () => {
-            document.getElementById('confirm-modal').style.display = 'none';
+            modal.style.display = 'none';
             yesButton.removeEventListener('click', onYes);
             noButton.removeEventListener('click', onNo);
         };
@@ -237,9 +267,21 @@ function showConfirm(title, message) {
 function calculatePeopleCount(request) {
     if (!request) return { total: 1, category: 'solo' };
 
-    const attendeeCount = request.attendees ? 
-    (Array.isArray(request.attendees) ? request.attendees.length : 
-    typeof request.attendees === 'string' ? JSON.parse(request.attendees).length : 0) : 0;
+    let attendeeCount = 0;
+    
+    if (request.attendees) {
+        if (Array.isArray(request.attendees)) {
+            attendeeCount = request.attendees.length;
+        } else if (typeof request.attendees === 'string') {
+            try {
+                const parsed = JSON.parse(request.attendees);
+                attendeeCount = Array.isArray(parsed) ? parsed.length : 0;
+            } catch (e) {
+                console.error('Error parsing attendees:', e);
+                attendeeCount = 0;
+            }
+        }
+    }
 
     const totalPeople = attendeeCount + 1; // +1 สำหรับผู้ขอ
 
@@ -275,16 +317,30 @@ function toggleLoader(buttonId, show) {
 }
 
 function getCurrentUser() {
-    const userJson = sessionStorage.getItem('currentUser');
-    return userJson ? JSON.parse(userJson) : null;
+    try {
+        const userJson = sessionStorage.getItem('currentUser');
+        return userJson ? JSON.parse(userJson) : null;
+    } catch (error) {
+        console.error('Error getting current user:', error);
+        return null;
+    }
 }
 
-function fileToObject(file) {
+async function fileToObject(file) {
     return new Promise((resolve, reject) => {
+        if (!file) {
+            reject(new Error('No file provided'));
+            return;
+        }
+        
         const reader = new FileReader();
         reader.onload = () => {
-            const data = reader.result.toString().split(',')[1];
-            resolve({ filename: file.name, mimeType: file.type, data: data });
+            try {
+                const data = reader.result.toString().split(',')[1];
+                resolve({ filename: file.name, mimeType: file.type, data: data });
+            } catch (error) {
+                reject(error);
+            }
         };
         reader.onerror = error => reject(error);
         reader.readAsDataURL(file);
@@ -295,9 +351,12 @@ function formatDisplayDate(dateString) {
     if (!dateString) return 'ไม่ระบุ';
     try {
         const date = new Date(dateString);
+        // ป้องกันปัญหา timezone
+        const adjustedDate = new Date(date.getTime() + (date.getTimezoneOffset() * 60000));
         const options = { year: 'numeric', month: 'short', day: 'numeric' };
-        return date.toLocaleDateString('th-TH', options);
+        return adjustedDate.toLocaleDateString('th-TH', options);
     } catch (e) {
+        console.error('Error formatting date:', e);
         return 'ไม่ระบุ';
     }
 }
@@ -306,6 +365,7 @@ function clearRequestsCache() {
     allRequestsCache = [];
     allMemosCache = [];
     userMemosCache = [];
+    console.log('✅ Cache cleared');
 }
 
 function checkAdminAccess() {
@@ -344,6 +404,11 @@ async function switchPage(targetPageId) {
         }
     });
 
+    // ✅ รีเซ็ต flag เมื่อออกจากหน้าแก้ไข
+    if (targetPageId !== 'edit-page') {
+        editPageListenersSetup = false;
+    }
+
     // ✅ เมื่อเปิดหน้าแก้ไข ให้ตั้งค่า event listeners
     if (targetPageId === 'edit-page') {
         setTimeout(() => {
@@ -352,18 +417,22 @@ async function switchPage(targetPageId) {
     }
 
     // โหลดข้อมูลตามหน้า
-    if (targetPageId === 'dashboard-page') await fetchUserRequests();
-    if (targetPageId === 'form-page') {
-        await resetRequestForm();
-        setTimeout(() => {
-            tryAutoFillRequester();
-        }, 100);
-    }
-    if (targetPageId === 'profile-page') loadProfileData();
-    if (targetPageId === 'stats-page') await loadStatsData();
-    if (targetPageId === 'admin-users-page') await fetchAllUsers();
-    if (targetPageId === 'command-generation-page') {
-        document.getElementById('admin-view-requests-tab').click();
+    try {
+        if (targetPageId === 'dashboard-page') await fetchUserRequests();
+        if (targetPageId === 'form-page') {
+            await resetRequestForm();
+            setTimeout(() => {
+                tryAutoFillRequester();
+            }, 100);
+        }
+        if (targetPageId === 'profile-page') loadProfileData();
+        if (targetPageId === 'stats-page') await loadStatsData();
+        if (targetPageId === 'admin-users-page') await fetchAllUsers();
+        if (targetPageId === 'command-generation-page') {
+            document.getElementById('admin-view-requests-tab').click();
+        }
+    } catch (error) {
+        console.error(`Error loading data for page ${targetPageId}:`, error);
     }
 }
 
@@ -372,14 +441,33 @@ function resetEditPage() {
     console.log("🧹 Resetting edit page...");
     
     // รีเซ็ตฟอร์ม
-    document.getElementById('edit-request-form').reset();
-    document.getElementById('edit-attendees-list').innerHTML = '';
-    document.getElementById('edit-result').classList.add('hidden');
+    const editForm = document.getElementById('edit-request-form');
+    if (editForm) editForm.reset();
+    
+    const attendeesList = document.getElementById('edit-attendees-list');
+    if (attendeesList) attendeesList.innerHTML = '';
+    
+    const editResult = document.getElementById('edit-result');
+    if (editResult) editResult.classList.add('hidden');
     
     // ล้างข้อมูลชั่วคราว
     sessionStorage.removeItem('currentEditRequestId');
-    document.getElementById('edit-request-id').value = '';
-    document.getElementById('edit-draft-id').value = '';
+    
+    const editRequestId = document.getElementById('edit-request-id');
+    if (editRequestId) editRequestId.value = '';
+    
+    const editDraftId = document.getElementById('edit-draft-id');
+    if (editDraftId) editDraftId.value = '';
+    
+    // รีเซ็ตค่าเริ่มต้น
+    const today = new Date().toISOString().split('T')[0];
+    const docDate = document.getElementById('edit-doc-date');
+    const startDate = document.getElementById('edit-start-date');
+    const endDate = document.getElementById('edit-end-date');
+    
+    if (docDate) docDate.value = today;
+    if (startDate) startDate.value = today;
+    if (endDate) endDate.value = today;
     
     console.log("✅ Edit page reset complete");
 }
@@ -387,10 +475,10 @@ function resetEditPage() {
 // --- AUTH FUNCTIONS ---
 
 async function handleLogin(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
-    const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value;
+    const username = document.getElementById('username')?.value.trim();
+    const password = document.getElementById('password')?.value;
 
     if (!username || !password) {
         showAlert('ผิดพลาด', 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
@@ -398,7 +486,9 @@ async function handleLogin(e) {
     }
 
     toggleLoader('login-button', true);
-    document.getElementById('login-error').classList.add('hidden');
+    
+    const loginError = document.getElementById('login-error');
+    if (loginError) loginError.classList.add('hidden');
     
     try {
         console.log('Attempting login for:', username);
@@ -418,13 +508,21 @@ async function handleLogin(e) {
             await fetchUserRequests();
             showAlert('สำเร็จ', 'เข้าสู่ระบบสำเร็จ');
         } else {
-            document.getElementById('login-error').textContent = result.message || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
-            document.getElementById('login-error').classList.remove('hidden');
+            if (loginError) {
+                loginError.textContent = result.message || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+                loginError.classList.remove('hidden');
+            } else {
+                showAlert('ผิดพลาด', result.message || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+            }
         }
     } catch (error) {
         console.error('Login error:', error);
-        document.getElementById('login-error').textContent = 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ: ' + error.message;
-        document.getElementById('login-error').classList.remove('hidden');
+        if (loginError) {
+            loginError.textContent = 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ: ' + error.message;
+            loginError.classList.remove('hidden');
+        } else {
+            showAlert('ผิดพลาด', 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ: ' + error.message);
+        }
     } finally {
         toggleLoader('login-button', false);
     }
@@ -442,6 +540,10 @@ function handleLogout() {
     sessionStorage.removeItem('currentEditRequestId');
     window.currentUser = null;
     
+    // ✅ รีเซ็ต flags
+    editPageListenersSetup = false;
+    globalListenersSetup = false;
+    
     // ✅ แสดงหน้าล็อกอิน
     showLoginScreen();
     
@@ -450,8 +552,8 @@ function handleLogout() {
 
 // ✅ ฟังก์ชันจัดการลืมรหัสผ่าน
 async function handleForgotPassword(e) {
-    e.preventDefault();
-    const email = document.getElementById('forgot-email').value.trim();
+    if (e) e.preventDefault();
+    const email = document.getElementById('forgot-email')?.value.trim();
     if (!email) {
         showAlert('ผิดพลาด', 'กรุณากรอกอีเมล');
         return;
@@ -463,8 +565,12 @@ async function handleForgotPassword(e) {
         const result = await apiCall('POST', 'handleForgotPassword', { email: email });
         
         if (result.status === 'success') {
-            document.getElementById('forgot-password-modal').style.display = 'none';
-            document.getElementById('forgot-password-form').reset();
+            const modal = document.getElementById('forgot-password-modal');
+            if (modal) modal.style.display = 'none';
+            
+            const form = document.getElementById('forgot-password-form');
+            if (form) form.reset();
+            
             showAlert('ส่งสำเร็จ', 'ระบบได้ส่งรหัสผ่านใหม่ไปยังอีเมลของคุณแล้ว กรุณาตรวจสอบกล่องจดหมาย (Inbox)');
         } else {
             showAlert('ผิดพลาด', result.message);
@@ -478,15 +584,15 @@ async function handleForgotPassword(e) {
 
 // ✅ ฟังก์ชันลงทะเบียน
 async function handleRegister(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
     const formData = {
-        username: document.getElementById('register-username').value.trim(),
-        password: document.getElementById('register-password').value,
-        fullName: document.getElementById('register-fullname').value.trim(),
-        email: document.getElementById('register-email').value.trim(),
-        position: document.getElementById('register-position').value.trim(),
-        department: document.getElementById('register-department').value.trim(),
+        username: document.getElementById('register-username')?.value.trim(),
+        password: document.getElementById('register-password')?.value,
+        fullName: document.getElementById('register-fullname')?.value.trim(),
+        email: document.getElementById('register-email')?.value.trim(),
+        position: document.getElementById('register-position')?.value.trim(),
+        department: document.getElementById('register-department')?.value.trim(),
         role: 'user'
     };
 
@@ -502,8 +608,11 @@ async function handleRegister(e) {
         
         if (result.status === 'success') {
             showAlert('สำเร็จ', 'ลงทะเบียนสำเร็จ! กรุณาเข้าสู่ระบบ');
-            document.getElementById('register-modal').style.display = 'none';
-            document.getElementById('register-form').reset();
+            const modal = document.getElementById('register-modal');
+            if (modal) modal.style.display = 'none';
+            
+            const form = document.getElementById('register-form');
+            if (form) form.reset();
         } else {
             showAlert('ผิดพลาด', result.message);
         }
@@ -518,22 +627,30 @@ async function handleRegister(e) {
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('App Initializing with Google Sheets Backend...');
+    
+    if (globalListenersSetup) {
+        console.log('Global listeners already setup, skipping...');
+        return;
+    }
+    
     setupEventListeners();
     enhanceEditFunctionSafety();
 
     // ตั้งค่าเริ่มต้นให้ Chart.js
-    Chart.defaults.font.family = "'Sarabun', sans-serif";
-    Chart.defaults.font.size = 14;
-    Chart.defaults.color = '#374151';
-    Chart.defaults.borderColor = 'rgba(229, 231, 235, 0.5)';
-    Chart.defaults.plugins.tooltip.enabled = true;
-    Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(17, 24, 39, 0.9)';
-    Chart.defaults.plugins.tooltip.titleFont = { size: 16, weight: 'bold' };
-    Chart.defaults.plugins.tooltip.bodyFont = { size: 14 };
-    Chart.defaults.plugins.tooltip.padding = 10;
-    Chart.defaults.plugins.tooltip.cornerRadius = 6;
-    Chart.defaults.plugins.tooltip.displayColors = true;
-    Chart.defaults.plugins.tooltip.boxPadding = 4;
+    if (typeof Chart !== 'undefined') {
+        Chart.defaults.font.family = "'Sarabun', sans-serif";
+        Chart.defaults.font.size = 14;
+        Chart.defaults.color = '#374151';
+        Chart.defaults.borderColor = 'rgba(229, 231, 235, 0.5)';
+        Chart.defaults.plugins.tooltip.enabled = true;
+        Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(17, 24, 39, 0.9)';
+        Chart.defaults.plugins.tooltip.titleFont = { size: 16, weight: 'bold' };
+        Chart.defaults.plugins.tooltip.bodyFont = { size: 14 };
+        Chart.defaults.plugins.tooltip.padding = 10;
+        Chart.defaults.plugins.tooltip.cornerRadius = 6;
+        Chart.defaults.plugins.tooltip.displayColors = true;
+        Chart.defaults.plugins.tooltip.boxPadding = 4;
+    }
 
     // ✅ ตรวจสอบว่าแท็บแก้ไขถูกซ่อนอยู่เสมอเมื่อเริ่มต้น
     const navEdit = document.getElementById('nav-edit');
@@ -544,34 +661,51 @@ document.addEventListener('DOMContentLoaded', () => {
     // ✅ รีเซ็ตหน้าแก้ไขเมื่อเริ่มต้น
     resetEditPage();
     
+    // ✅ โหลดตำแหน่งพิเศษ
+    loadSpecialPositions();
+    
     const user = getCurrentUser();
     if (user) {
         initializeUserSession(user);
     } else {
         showLoginScreen();
     }
+    
+    globalListenersSetup = true;
+    console.log('✅ App initialization completed');
 });
 
 // --- INITIALIZATION ---
 
 function initializeUserSession(user) {
+    if (!user) return;
+    
     updateUIForUser(user);
     showMainApp();
     switchPage('dashboard-page');
 }
 
 function updateUIForUser(user) {
-    document.getElementById('user-fullname').textContent = user.fullName || 'N/A';
-    document.getElementById('user-position').textContent = user.position || 'N/A';
+    const fullnameEl = document.getElementById('user-fullname');
+    const positionEl = document.getElementById('user-position');
+    
+    if (fullnameEl) fullnameEl.textContent = user.fullName || 'N/A';
+    if (positionEl) positionEl.textContent = user.position || 'N/A';
 
     const isAdmin = user.role === 'admin';
-    document.getElementById('admin-nav-command').classList.toggle('hidden', !isAdmin);
-    document.getElementById('admin-nav-users').classList.toggle('hidden', !isAdmin);
+    const adminNavCommand = document.getElementById('admin-nav-command');
+    const adminNavUsers = document.getElementById('admin-nav-users');
+    
+    if (adminNavCommand) adminNavCommand.classList.toggle('hidden', !isAdmin);
+    if (adminNavUsers) adminNavUsers.classList.toggle('hidden', !isAdmin);
 }
 
 function showMainApp() {
-    document.getElementById('login-screen').classList.add('hidden');
-    document.getElementById('main-app').classList.remove('hidden');
+    const loginScreen = document.getElementById('login-screen');
+    const mainApp = document.getElementById('main-app');
+    
+    if (loginScreen) loginScreen.classList.add('hidden');
+    if (mainApp) mainApp.classList.remove('hidden');
 }
 
 // ✅ ฟังก์ชันแสดงหน้าล็อกอิน
@@ -586,9 +720,13 @@ function showLoginScreen() {
         page.classList.add('hidden');
     });
     
-    document.getElementById('edit-page').classList.add('hidden');
-    document.getElementById('main-app').classList.add('hidden');
-    document.getElementById('login-screen').classList.remove('hidden');
+    const editPage = document.getElementById('edit-page');
+    const mainApp = document.getElementById('main-app');
+    const loginScreen = document.getElementById('login-screen');
+    
+    if (editPage) editPage.classList.add('hidden');
+    if (mainApp) mainApp.classList.add('hidden');
+    if (loginScreen) loginScreen.classList.remove('hidden');
     
     // ✅ รีเซ็ตสถานะปุ่มนำทาง
     document.querySelectorAll('.nav-button').forEach(btn => {
@@ -596,7 +734,8 @@ function showLoginScreen() {
     });
     
     // ✅ เปิดหน้าแดชบอร์ดเป็น default
-    document.getElementById('user-nav-dashboard').classList.add('active');
+    const userNavDashboard = document.getElementById('user-nav-dashboard');
+    if (userNavDashboard) userNavDashboard.classList.add('active');
     
     // ✅ ล้างข้อมูล session
     sessionStorage.removeItem('currentUser');
@@ -604,8 +743,11 @@ function showLoginScreen() {
     window.currentUser = null;
     
     // ✅ รีเซ็ตฟอร์มล็อกอิน
-    document.getElementById('login-form').reset();
-    document.getElementById('login-error').classList.add('hidden');
+    const loginForm = document.getElementById('login-form');
+    const loginError = document.getElementById('login-error');
+    
+    if (loginForm) loginForm.reset();
+    if (loginError) loginError.classList.add('hidden');
     
     console.log("✅ Login screen ready");
 }
@@ -613,29 +755,49 @@ function showLoginScreen() {
 // --- EVENT LISTENER SETUP ---
 
 function setupEventListeners() {
+    if (globalListenersSetup) {
+        console.log('Event listeners already setup, skipping...');
+        return;
+    }
+
     // Auth
-    document.getElementById('login-form').addEventListener('submit', handleLogin);
-    document.getElementById('logout-button').addEventListener('click', handleLogout);
-    document.getElementById('show-register-modal-button').addEventListener('click', () => document.getElementById('register-modal').style.display = 'flex');
-    document.getElementById('register-form').addEventListener('submit', handleRegister);
+    const loginForm = document.getElementById('login-form');
+    const logoutButton = document.getElementById('logout-button');
+    const showRegisterModalButton = document.getElementById('show-register-modal-button');
+    const registerForm = document.getElementById('register-form');
+    
+    if (loginForm) loginForm.addEventListener('submit', handleLogin);
+    if (logoutButton) logoutButton.addEventListener('click', handleLogout);
+    if (showRegisterModalButton) showRegisterModalButton.addEventListener('click', () => {
+        const modal = document.getElementById('register-modal');
+        if (modal) modal.style.display = 'flex';
+    });
+    if (registerForm) registerForm.addEventListener('submit', handleRegister);
     
     // ✅ เพิ่มการตั้งค่าพาหนะแบบหลายตัวเลือก
     setupVehicleMultipleSelection();
+    
     // Stats page events
-    document.getElementById('refresh-stats').addEventListener('click', async () => {
+    const refreshStats = document.getElementById('refresh-stats');
+    const exportStats = document.getElementById('export-stats');
+    
+    if (refreshStats) refreshStats.addEventListener('click', async () => {
         await loadStatsData();
         showAlert('สำเร็จ', 'อัพเดทข้อมูลสถิติเรียบร้อยแล้ว');
     });
 
-    document.getElementById('export-stats').addEventListener('click', exportStatsReport);
+    if (exportStats) exportStats.addEventListener('click', exportStatsReport);
 
     // Navigation
-    document.getElementById('navigation').addEventListener('click', (e) => {
-        const navButton = e.target.closest('.nav-button');
-        if (navButton && navButton.dataset.target) {
-            switchPage(navButton.dataset.target);
-        }
-    });
+    const navigation = document.getElementById('navigation');
+    if (navigation) {
+        navigation.addEventListener('click', (e) => {
+            const navButton = e.target.closest('.nav-button');
+            if (navButton && navButton.dataset.target) {
+                switchPage(navButton.dataset.target);
+            }
+        });
+    }
 
     // Modals
     document.querySelectorAll('.modal').forEach(modal => {
@@ -643,76 +805,151 @@ function setupEventListeners() {
             if (e.target === modal) modal.style.display = 'none';
         });
     });
-    document.getElementById('register-modal-close-button').addEventListener('click', () => document.getElementById('register-modal').style.display = 'none');
-    document.getElementById('register-modal-close-button2').addEventListener('click', () => document.getElementById('register-modal').style.display = 'none');
-    document.getElementById('alert-modal-close-button').addEventListener('click', () => document.getElementById('alert-modal').style.display = 'none');
-    document.getElementById('alert-modal-ok-button').addEventListener('click', () => document.getElementById('alert-modal').style.display = 'none');
-    document.getElementById('confirm-modal-close-button').addEventListener('click', () => document.getElementById('confirm-modal').style.display = 'none');
-    document.getElementById('send-memo-modal-close-button').addEventListener('click', () => document.getElementById('send-memo-modal').style.display = 'none');
-    document.getElementById('send-memo-cancel-button').addEventListener('click', () => document.getElementById('send-memo-modal').style.display = 'none');
-
-    // Modal Event Listeners ใหม่
-    document.getElementById('command-approval-form').addEventListener('submit', handleCommandApproval);
-    document.getElementById('command-approval-modal-close-button').addEventListener('click', () => document.getElementById('command-approval-modal').style.display = 'none');
-    document.getElementById('command-approval-cancel-button').addEventListener('click', () => document.getElementById('command-approval-modal').style.display = 'none');
     
-    document.getElementById('dispatch-form').addEventListener('submit', handleDispatchFormSubmit);
-    document.getElementById('dispatch-modal-close-button').addEventListener('click', () => document.getElementById('dispatch-modal').style.display = 'none');
-    document.getElementById('dispatch-cancel-button').addEventListener('click', () => document.getElementById('dispatch-modal').style.display = 'none');
+    // Modal close buttons
+    const closeButtons = [
+        { id: 'register-modal-close-button', modal: 'register-modal' },
+        { id: 'register-modal-close-button2', modal: 'register-modal' },
+        { id: 'alert-modal-close-button', modal: 'alert-modal' },
+        { id: 'confirm-modal-close-button', modal: 'confirm-modal' },
+        { id: 'send-memo-modal-close-button', modal: 'send-memo-modal' },
+        { id: 'command-approval-modal-close-button', modal: 'command-approval-modal' },
+        { id: 'dispatch-modal-close-button', modal: 'dispatch-modal' },
+        { id: 'admin-memo-action-modal-close-button', modal: 'admin-memo-action-modal' },
+        { id: 'forgot-password-modal-close-button', modal: 'forgot-password-modal' }
+    ];
     
-    document.getElementById('admin-memo-action-form').addEventListener('submit', handleAdminMemoActionSubmit);
-    document.getElementById('admin-memo-action-modal-close-button').addEventListener('click', () => document.getElementById('admin-memo-action-modal').style.display = 'none');
-    document.getElementById('admin-memo-cancel-button').addEventListener('click', () => document.getElementById('admin-memo-action-modal').style.display = 'none');
-    
-    // Event listenerสำหรับแสดง/ซ่อนส่วนอัพโหลดไฟล์
-    document.getElementById('admin-memo-status').addEventListener('change', function(e) {
-        const fileUploads = document.getElementById('admin-file-uploads');
-        if (e.target.value === 'เสร็จสิ้น/รับไฟล์ไปใช้งาน') {
-            fileUploads.classList.remove('hidden');
-        } else {
-            fileUploads.classList.add('hidden');
+    closeButtons.forEach(button => {
+        const element = document.getElementById(button.id);
+        if (element) {
+            element.addEventListener('click', () => {
+                const modal = document.getElementById(button.modal);
+                if (modal) modal.style.display = 'none';
+            });
         }
     });
     
+    // Cancel buttons
+    const cancelButtons = [
+        { id: 'send-memo-cancel-button', modal: 'send-memo-modal' },
+        { id: 'command-approval-cancel-button', modal: 'command-approval-modal' },
+        { id: 'dispatch-cancel-button', modal: 'dispatch-modal' },
+        { id: 'admin-memo-cancel-button', modal: 'admin-memo-action-modal' },
+        { id: 'forgot-password-cancel-button', modal: 'forgot-password-modal' }
+    ];
+    
+    cancelButtons.forEach(button => {
+        const element = document.getElementById(button.id);
+        if (element) {
+            element.addEventListener('click', () => {
+                const modal = document.getElementById(button.modal);
+                if (modal) modal.style.display = 'none';
+            });
+        }
+    });
+
+    // Alert modal OK button
+    const alertOkButton = document.getElementById('alert-modal-ok-button');
+    if (alertOkButton) {
+        alertOkButton.addEventListener('click', () => {
+            const modal = document.getElementById('alert-modal');
+            if (modal) modal.style.display = 'none';
+        });
+    }
+
+    // Modal Event Listeners ใหม่
+    const commandApprovalForm = document.getElementById('command-approval-form');
+    const dispatchForm = document.getElementById('dispatch-form');
+    const adminMemoActionForm = document.getElementById('admin-memo-action-form');
+    
+    if (commandApprovalForm) commandApprovalForm.addEventListener('submit', handleCommandApproval);
+    if (dispatchForm) dispatchForm.addEventListener('submit', handleDispatchFormSubmit);
+    if (adminMemoActionForm) adminMemoActionForm.addEventListener('submit', handleAdminMemoActionSubmit);
+    
+    // Event listenerสำหรับแสดง/ซ่อนส่วนอัพโหลดไฟล์
+    const adminMemoStatus = document.getElementById('admin-memo-status');
+    if (adminMemoStatus) {
+        adminMemoStatus.addEventListener('change', function(e) {
+            const fileUploads = document.getElementById('admin-file-uploads');
+            if (fileUploads) {
+                if (e.target.value === 'เสร็จสิ้น/รับไฟล์ไปใช้งาน') {
+                    fileUploads.classList.remove('hidden');
+                } else {
+                    fileUploads.classList.add('hidden');
+                }
+            }
+        });
+    }
+    
     // Forgot Password Modal
-    document.getElementById('show-forgot-password-modal-button').addEventListener('click', () => document.getElementById('forgot-password-modal').style.display = 'flex');
-    document.getElementById('forgot-password-modal-close-button').addEventListener('click', () => document.getElementById('forgot-password-modal').style.display = 'none');
-    document.getElementById('forgot-password-cancel-button').addEventListener('click', () => document.getElementById('forgot-password-modal').style.display = 'none');
-    document.getElementById('forgot-password-form').addEventListener('submit', handleForgotPassword);
+    const showForgotPasswordButton = document.getElementById('show-forgot-password-modal-button');
+    const forgotPasswordForm = document.getElementById('forgot-password-form');
+    
+    if (showForgotPasswordButton) showForgotPasswordButton.addEventListener('click', () => {
+        const modal = document.getElementById('forgot-password-modal');
+        if (modal) modal.style.display = 'flex';
+    });
+    
+    if (forgotPasswordForm) forgotPasswordForm.addEventListener('submit', handleForgotPassword);
     
     // Forms
-    document.getElementById('request-form').addEventListener('submit', handleRequestFormSubmit);
-    document.getElementById('form-add-attendee').addEventListener('click', () => addAttendeeField());
-    document.getElementById('form-import-excel').addEventListener('click', () => document.getElementById('excel-file-input').click());
-    document.getElementById('excel-file-input').addEventListener('change', handleExcelImport);
-    document.getElementById('form-download-template').addEventListener('click', downloadAttendeeTemplate);
-    document.querySelectorAll('input[name="expense_option"]').forEach(radio => radio.addEventListener('change', toggleExpenseOptions));
-    document.querySelectorAll('input[name="vehicle_option"]').forEach(radio => radio.addEventListener('change', toggleVehicleOptions));
+    const requestForm = document.getElementById('request-form');
+    const formAddAttendee = document.getElementById('form-add-attendee');
+    const formImportExcel = document.getElementById('form-import-excel');
+    const excelFileInput = document.getElementById('excel-file-input');
+    const formDownloadTemplate = document.getElementById('form-download-template');
     
-    document.getElementById('send-memo-form').addEventListener('submit', handleMemoSubmitFromModal);
-    document.querySelectorAll('input[name="modal_memo_type"]').forEach(radio => radio.addEventListener('change', (e) => {
-        const fileContainer = document.getElementById('modal-memo-file-container');
-        const fileInput = document.getElementById('modal-memo-file');
-        const isReimburse = e.target.value === 'reimburse';
-        fileContainer.classList.toggle('hidden', isReimburse);
-        fileInput.required = !isReimburse;
-    }));
+    if (requestForm) requestForm.addEventListener('submit', handleRequestFormSubmit);
+    if (formAddAttendee) formAddAttendee.addEventListener('click', () => addAttendeeField());
+    if (formImportExcel) formImportExcel.addEventListener('click', () => {
+        if (excelFileInput) excelFileInput.click();
+    });
+    if (excelFileInput) excelFileInput.addEventListener('change', handleExcelImport);
+    if (formDownloadTemplate) formDownloadTemplate.addEventListener('click', downloadAttendeeTemplate);
+    
+    // Expense and Vehicle options
+    document.querySelectorAll('input[name="expense_option"]').forEach(radio => {
+        radio.addEventListener('change', toggleExpenseOptions);
+    });
+    
+    document.querySelectorAll('input[name="vehicle_option"]').forEach(radio => {
+        radio.addEventListener('change', toggleVehicleOptions);
+    });
+    
+    // Send Memo Form
+    const sendMemoForm = document.getElementById('send-memo-form');
+    if (sendMemoForm) sendMemoForm.addEventListener('submit', handleMemoSubmitFromModal);
+    
+    document.querySelectorAll('input[name="modal_memo_type"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const fileContainer = document.getElementById('modal-memo-file-container');
+            const fileInput = document.getElementById('modal-memo-file');
+            const isReimburse = e.target.value === 'reimburse';
+            if (fileContainer) fileContainer.classList.toggle('hidden', isReimburse);
+            if (fileInput) fileInput.required = !isReimburse;
+        });
+    });
 
-    document.getElementById('profile-form').addEventListener('submit', handleProfileUpdate);
-    document.getElementById('password-form').addEventListener('submit', handlePasswordUpdate);
-    document.getElementById('show-password-toggle').addEventListener('change', togglePasswordVisibility);
+    // Profile forms
+    const profileForm = document.getElementById('profile-form');
+    const passwordForm = document.getElementById('password-form');
+    const showPasswordToggle = document.getElementById('show-password-toggle');
     
-    document.getElementById('form-department').addEventListener('change', (e) => {
-        const selectedPosition = e.target.value;
-        const headNameInput = document.getElementById('form-head-name');
-        headNameInput.value = specialPositionMap[selectedPosition] || '';
-    });
+    if (profileForm) profileForm.addEventListener('submit', handleProfileUpdate);
+    if (passwordForm) passwordForm.addEventListener('submit', handlePasswordUpdate);
+    if (showPasswordToggle) showPasswordToggle.addEventListener('change', togglePasswordVisibility);
     
-    // ✅ NEW: Edit Form Event Listeners
-    document.getElementById('edit-request-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        generateDocumentFromDraft();
-    });
+    // Department change
+    const formDepartment = document.getElementById('form-department');
+    if (formDepartment) {
+        formDepartment.addEventListener('change', (e) => {
+            const selectedPosition = e.target.value;
+            const headNameInput = document.getElementById('form-head-name');
+            if (headNameInput) headNameInput.value = specialPositionMap[selectedPosition] || '';
+        });
+    }
+    
+    // ✅ NEW: Edit Form Event Listeners - ใช้การจัดการแบบแยกต่างหากใน setupEditPageEventListeners
     
     // ✅ NEW: Create New Request Button
     const createNewRequestBtn = document.getElementById('create-new-request-button');
@@ -725,80 +962,65 @@ function setupEventListeners() {
     if (saveDraftBtn) {
         saveDraftBtn.addEventListener('click', saveDraft);
     }
-    document.addEventListener('click', function(e) {
-    // ตรวจสอบการคลิกปุ่มออกหนังสือส่ง
-    if (e.target.matches('.dispatch-button') || 
-        e.target.closest('.dispatch-button')) {
-        const button = e.target.matches('.dispatch-button') ? e.target : e.target.closest('.dispatch-button');
-        const requestId = button.getAttribute('data-request-id');
-        
-        if (requestId) {
-            console.log("🖱️ Dispatch button clicked for:", requestId);
-            openDispatchModal(requestId);
-        }
-    }
-});
-// ✅ ฟังก์ชันเปิด Send Memo Modal
-function openSendMemoModal(requestId) {
-    console.log("📤 Opening send memo modal for:", requestId);
     
-    if (!requestId) {
-        console.error("❌ No requestId provided");
-        showAlert('ผิดพลาด', 'ไม่พบรหัสคำขอ');
-        return;
-    }
-    
-    const requestIdInput = document.getElementById('memo-modal-request-id');
-    const modal = document.getElementById('send-memo-modal');
-    
-    if (!requestIdInput || !modal) {
-        console.error("❌ Required elements not found");
-        showAlert('ระบบผิดพลาด', 'ไม่พบองค์ประกอบที่จำเป็นในหน้า');
-        return;
-    }
-    
-    // ตั้งค่าข้อมูลในฟอร์ม
-    requestIdInput.value = requestId;
-    
-    // รีเซ็ตฟอร์ม
-    document.getElementById('send-memo-form').reset();
-    
-    // แสดง modal
-    modal.style.display = 'flex';
-    
-    console.log("✅ Send memo modal opened successfully");
-}
-    
-    // ✅ NEW: Requests List Actions
+    // Requests List Actions
     const requestsList = document.getElementById('requests-list');
     if (requestsList) {
         requestsList.addEventListener('click', handleRequestAction);
     }
     
     // Search
-    document.getElementById('search-requests').addEventListener('input', (e) => renderRequestsList(allRequestsCache, userMemosCache, e.target.value));
+    const searchRequests = document.getElementById('search-requests');
+    if (searchRequests) {
+        searchRequests.addEventListener('input', (e) => renderRequestsList(allRequestsCache, userMemosCache, e.target.value));
+    }
 
     // Admin
-    document.getElementById('add-user-button').addEventListener('click', openAddUserModal);
-    document.getElementById('download-user-template-button').addEventListener('click', downloadUserTemplate);
-    document.getElementById('import-users-button').addEventListener('click', () => document.getElementById('user-excel-input').click());
-    document.getElementById('user-excel-input').addEventListener('change', handleUserImport);
+    const addUserButton = document.getElementById('add-user-button');
+    const downloadUserTemplateButton = document.getElementById('download-user-template-button');
+    const importUsersButton = document.getElementById('import-users-button');
+    const userExcelInput = document.getElementById('user-excel-input');
+    
+    if (addUserButton) addUserButton.addEventListener('click', openAddUserModal);
+    if (downloadUserTemplateButton) downloadUserTemplateButton.addEventListener('click', downloadUserTemplate);
+    if (importUsersButton) importUsersButton.addEventListener('click', () => {
+        if (userExcelInput) userExcelInput.click();
+    });
+    if (userExcelInput) userExcelInput.addEventListener('change', handleUserImport);
     
     // Admin Page Tabs
-    document.getElementById('admin-view-requests-tab').addEventListener('click', (e) => {
-        document.getElementById('admin-view-memos-tab').classList.remove('active');
-        e.target.classList.add('active');
-        document.getElementById('admin-requests-view').classList.remove('hidden');
-        document.getElementById('admin-memos-view').classList.add('hidden');
-        fetchAllRequestsForCommand();
-    });
-    document.getElementById('admin-view-memos-tab').addEventListener('click', (e) => {
-        document.getElementById('admin-view-requests-tab').classList.remove('active');
-        e.target.classList.add('active');
-        document.getElementById('admin-memos-view').classList.remove('hidden');
-        document.getElementById('admin-requests-view').classList.add('hidden');
-        fetchAllMemos();
-    });
+    const adminViewRequestsTab = document.getElementById('admin-view-requests-tab');
+    const adminViewMemosTab = document.getElementById('admin-view-memos-tab');
+    
+    if (adminViewRequestsTab) {
+        adminViewRequestsTab.addEventListener('click', (e) => {
+            if (adminViewMemosTab) adminViewMemosTab.classList.remove('active');
+            e.target.classList.add('active');
+            
+            const adminRequestsView = document.getElementById('admin-requests-view');
+            const adminMemosView = document.getElementById('admin-memos-view');
+            
+            if (adminRequestsView) adminRequestsView.classList.remove('hidden');
+            if (adminMemosView) adminMemosView.classList.add('hidden');
+            
+            fetchAllRequestsForCommand();
+        });
+    }
+    
+    if (adminViewMemosTab) {
+        adminViewMemosTab.addEventListener('click', (e) => {
+            if (adminViewRequestsTab) adminViewRequestsTab.classList.remove('active');
+            e.target.classList.add('active');
+            
+            const adminRequestsView = document.getElementById('admin-requests-view');
+            const adminMemosView = document.getElementById('admin-memos-view');
+            
+            if (adminRequestsView) adminRequestsView.classList.add('hidden');
+            if (adminMemosView) adminMemosView.classList.remove('hidden');
+            
+            fetchAllMemos();
+        });
+    }
 
     // ✅ NEW: Back to Dashboard from Edit Page
     const backToDashboardBtn = document.getElementById('back-to-dashboard');
@@ -809,37 +1031,11 @@ function openSendMemoModal(requestId) {
         });
     }
 
-    // ✅ NEW: Edit Page Specific Event Listeners
-    const editAddAttendeeBtn = document.getElementById('edit-add-attendee');
-    if (editAddAttendeeBtn) {
-        editAddAttendeeBtn.addEventListener('click', () => addEditAttendeeField());
-    }
-    
-    // ✅ NEW: Edit Page Expense Options
-    document.querySelectorAll('input[name="edit-expense_option"]').forEach(radio => {
-        radio.addEventListener('change', toggleEditExpenseOptions);
-    });
-    
-    // ✅ NEW: Edit Page Vehicle Options
-    document.querySelectorAll('input[name="edit-vehicle_option"]').forEach(radio => {
-        radio.addEventListener('change', toggleEditVehicleOptions);
-    });
-    
-    // ✅ NEW: Edit Page Department Change
-    const editDepartment = document.getElementById('edit-department');
-    if (editDepartment) {
-        editDepartment.addEventListener('change', (e) => {
-            const selectedPosition = e.target.value;
-            const headNameInput = document.getElementById('edit-head-name');
-            headNameInput.value = specialPositionMap[selectedPosition] || '';
-        });
-    }
-
     // ✅ Global Error Handler
     window.addEventListener('error', (event) => {
         console.error('Global error:', event.error);
         
-        if (event.error.message && event.error.message.includes('openEditPageDirect')) {
+        if (event.error && event.error.message && event.error.message.includes('openEditPageDirect')) {
             console.warn('Ignoring openEditPageDirect error - function no longer exists');
             return;
         }
@@ -868,6 +1064,11 @@ function openSendMemoModal(requestId) {
 function setupEditPageEventListeners() {
     console.log("🔧 Setting up edit page event listeners...");
     
+    if (editPageListenersSetup) {
+        console.log("Edit page listeners already setup, skipping...");
+        return;
+    }
+    
     // ✅ ลบ event listeners เดิมก่อน (ป้องกัน duplication)
     removeEditPageEventListeners();
     
@@ -877,7 +1078,7 @@ function setupEditPageEventListeners() {
         backButton.addEventListener('click', handleBackToDashboard);
     }
     
-    // ✅ ปุ่มสร้างเอกสาร
+    // ✅ ปุ่มสร้างเอกสาร - ใช้การจัดการผ่าน form submit แทน
     const generateButton = document.getElementById('generate-document-button');
     if (generateButton) {
         generateButton.addEventListener('click', handleGenerateDocument);
@@ -911,6 +1112,7 @@ function setupEditPageEventListeners() {
     // ✅ ตั้งค่า vehicle options เริ่มต้น
     toggleEditVehicleOptions();
     
+    editPageListenersSetup = true;
     console.log("✅ Edit page event listeners setup completed");
 }
 
@@ -947,8 +1149,10 @@ function handleBackToDashboard() {
 }
 
 function handleGenerateDocument(e) {
-    e.preventDefault();
-    e.stopPropagation();
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
     console.log("📄 Generate document button clicked");
     generateDocumentFromDraft();
 }
@@ -968,7 +1172,7 @@ function handleEditVehicleOptionChange() {
 function handleEditDepartmentChange(e) {
     const selectedPosition = e.target.value;
     const headNameInput = document.getElementById('edit-head-name');
-    headNameInput.value = specialPositionMap[selectedPosition] || '';
+    if (headNameInput) headNameInput.value = specialPositionMap[selectedPosition] || '';
 }
 
 // ✅ ฟังก์ชันเติมข้อมูลในฟอร์มแก้ไข
@@ -980,8 +1184,11 @@ async function populateEditForm(requestData) {
         showEditPageLoading(true);
         
         // เติมข้อมูลพื้นฐาน
-        document.getElementById('edit-draft-id').value = requestData.draftId || '';
-        document.getElementById('edit-request-id').value = requestData.requestId || requestData.id || '';
+        const draftIdInput = document.getElementById('edit-draft-id');
+        const requestIdInput = document.getElementById('edit-request-id');
+        
+        if (draftIdInput) draftIdInput.value = requestData.draftId || '';
+        if (requestIdInput) requestIdInput.value = requestData.requestId || requestData.id || '';
         
         // เติมวันที่
         const formatDateForInput = (dateValue) => {
@@ -995,17 +1202,25 @@ async function populateEditForm(requestData) {
             }
         };
         
-        document.getElementById('edit-doc-date').value = formatDateForInput(requestData.docDate);
-        document.getElementById('edit-requester-name').value = requestData.requesterName || '';
-        document.getElementById('edit-requester-position').value = requestData.requesterPosition || '';
-        document.getElementById('edit-location').value = requestData.location || '';
-        document.getElementById('edit-purpose').value = requestData.purpose || '';
-        document.getElementById('edit-start-date').value = formatDateForInput(requestData.startDate);
-        document.getElementById('edit-end-date').value = formatDateForInput(requestData.endDate);
+        const docDate = document.getElementById('edit-doc-date');
+        const requesterName = document.getElementById('edit-requester-name');
+        const requesterPosition = document.getElementById('edit-requester-position');
+        const location = document.getElementById('edit-location');
+        const purpose = document.getElementById('edit-purpose');
+        const startDate = document.getElementById('edit-start-date');
+        const endDate = document.getElementById('edit-end-date');
+        
+        if (docDate) docDate.value = formatDateForInput(requestData.docDate);
+        if (requesterName) requesterName.value = requestData.requesterName || '';
+        if (requesterPosition) requesterPosition.value = requestData.requesterPosition || '';
+        if (location) location.value = requestData.location || '';
+        if (purpose) purpose.value = requestData.purpose || '';
+        if (startDate) startDate.value = formatDateForInput(requestData.startDate);
+        if (endDate) endDate.value = formatDateForInput(requestData.endDate);
         
         // เติมผู้ร่วมเดินทาง
         const attendeesList = document.getElementById('edit-attendees-list');
-        attendeesList.innerHTML = '';
+        if (attendeesList) attendeesList.innerHTML = '';
         
         if (requestData.attendees && requestData.attendees.length > 0) {
             console.log("👥 Loading attendees:", requestData.attendees);
@@ -1023,7 +1238,7 @@ async function populateEditForm(requestData) {
         
         // เติมข้อมูลการเดินทาง
         await fillEditVehicleData(requestData);
-        fillEditVehicleData(requestData);
+        
         // เติมข้อมูลผู้ลงนาม
         await fillEditSignerData(requestData);
         
@@ -1044,7 +1259,8 @@ async function fillEditExpenseData(requestData) {
     const expenseOption = requestData.expenseOption || 'no';
     
     if (expenseOption === 'partial') {
-        document.getElementById('edit-expense_partial').checked = true;
+        const expensePartial = document.getElementById('edit-expense_partial');
+        if (expensePartial) expensePartial.checked = true;
         toggleEditExpenseOptions();
         
         if (requestData.expenseItems && requestData.expenseItems.length > 0) {
@@ -1060,7 +1276,8 @@ async function fillEditExpenseData(requestData) {
                     if (chk.dataset.itemName === item.name) {
                         chk.checked = true;
                         if (item.name === 'ค่าใช้จ่ายอื่นๆ' && item.detail) {
-                            document.getElementById('edit-expense_other_text').value = item.detail;
+                            const otherText = document.getElementById('edit-expense_other_text');
+                            if (otherText) otherText.value = item.detail;
                         }
                     }
                 });
@@ -1068,10 +1285,12 @@ async function fillEditExpenseData(requestData) {
         }
         
         if (requestData.totalExpense) {
-            document.getElementById('edit-total-expense').value = requestData.totalExpense;
+            const totalExpense = document.getElementById('edit-total-expense');
+            if (totalExpense) totalExpense.value = requestData.totalExpense;
         }
     } else {
-        document.getElementById('edit-expense_no').checked = true;
+        const expenseNo = document.getElementById('edit-expense_no');
+        if (expenseNo) expenseNo.checked = true;
         toggleEditExpenseOptions();
     }
 }
@@ -1086,7 +1305,8 @@ async function fillEditVehicleData(requestData) {
         toggleEditVehicleOptions();
         
         if (vehicleOption === 'private' && requestData.licensePlate) {
-            document.getElementById('edit-license-plate').value = requestData.licensePlate;
+            const licensePlate = document.getElementById('edit-license-plate');
+            if (licensePlate) licensePlate.value = requestData.licensePlate;
         }
     }
 }
@@ -1094,19 +1314,23 @@ async function fillEditVehicleData(requestData) {
 // ✅ ฟังก์ชันเติมข้อมูลผู้ลงนาม
 async function fillEditSignerData(requestData) {
     if (requestData.department) {
-        document.getElementById('edit-department').value = requestData.department;
+        const department = document.getElementById('edit-department');
+        if (department) department.value = requestData.department;
         const headNameInput = document.getElementById('edit-head-name');
-        headNameInput.value = specialPositionMap[requestData.department] || '';
+        if (headNameInput) headNameInput.value = specialPositionMap[requestData.department] || '';
     }
     
     if (requestData.headName) {
-        document.getElementById('edit-head-name').value = requestData.headName;
+        const headNameInput = document.getElementById('edit-head-name');
+        if (headNameInput) headNameInput.value = requestData.headName;
     }
 }
 
 // ✅ ฟังก์ชันเพิ่มผู้ร่วมเดินทางในหน้าแก้ไข
 function addEditAttendeeField(name = '', position = '') {
     const list = document.getElementById('edit-attendees-list');
+    if (!list) return;
+    
     const attendeeDiv = document.createElement('div');
     attendeeDiv.className = 'grid grid-cols-1 md:grid-cols-3 gap-2 items-center mb-2';
     
@@ -1166,31 +1390,48 @@ function toggleEditExpenseOptions() {
     const partialOptions = document.getElementById('edit-partial-expense-options');
     const totalContainer = document.getElementById('edit-total-expense-container');
     
-    if (document.getElementById('edit-expense_partial')?.checked) {
-        partialOptions.classList.remove('hidden');
-        totalContainer.classList.remove('hidden');
+    const expensePartial = document.getElementById('edit-expense_partial');
+    
+    if (expensePartial?.checked) {
+        if (partialOptions) partialOptions.classList.remove('hidden');
+        if (totalContainer) totalContainer.classList.remove('hidden');
     } else {
-        partialOptions.classList.add('hidden');
-        totalContainer.classList.add('hidden');
+        if (partialOptions) partialOptions.classList.add('hidden');
+        if (totalContainer) totalContainer.classList.add('hidden');
         
         // รีเซ็ตค่า expense items
         document.querySelectorAll('input[name="edit-expense_item"]').forEach(chk => {
             chk.checked = false;
         });
-        document.getElementById('edit-expense_other_text').value = '';
-        document.getElementById('edit-total-expense').value = '';
+        const otherText = document.getElementById('edit-expense_other_text');
+        if (otherText) otherText.value = '';
+        const totalExpense = document.getElementById('edit-total-expense');
+        if (totalExpense) totalExpense.value = '';
     }
 }
 
 // ✅ ฟังก์ชัน toggle สำหรับหน้าแก้ไข - Vehicle
 function toggleEditVehicleOptions() {
     const privateDetails = document.getElementById('edit-private-vehicle-details');
+    const publicDetails = document.getElementById('edit-public-vehicle-details');
     
-    if (document.getElementById('edit-vehicle_private')?.checked) {
-        privateDetails.classList.remove('hidden');
+    const vehiclePrivate = document.getElementById('edit-vehicle_private');
+    const vehiclePublic = document.getElementById('edit-vehicle_public');
+    
+    if (vehiclePrivate?.checked) {
+        if (privateDetails) privateDetails.classList.remove('hidden');
     } else {
-        privateDetails.classList.add('hidden');
-        document.getElementById('edit-license-plate').value = '';
+        if (privateDetails) privateDetails.classList.add('hidden');
+        const licensePlate = document.getElementById('edit-license-plate');
+        if (licensePlate) licensePlate.value = '';
+    }
+    
+    if (vehiclePublic?.checked) {
+        if (publicDetails) publicDetails.classList.remove('hidden');
+    } else {
+        if (publicDetails) publicDetails.classList.add('hidden');
+        const otherVehicle = document.getElementById('edit-other-vehicle');
+        if (otherVehicle) otherVehicle.value = '';
     }
 }
 
@@ -1218,11 +1459,14 @@ async function openEditPage(requestId) {
         resetEditPage();
         
         // แสดง loading state
-        document.getElementById('edit-attendees-list').innerHTML = `
-            <div class="text-center p-4">
-                <div class="loader mx-auto"></div>
-                <p class="mt-2">กำลังโหลดข้อมูล...</p>
-            </div>`;
+        const attendeesList = document.getElementById('edit-attendees-list');
+        if (attendeesList) {
+            attendeesList.innerHTML = `
+                <div class="text-center p-4">
+                    <div class="loader mx-auto"></div>
+                    <p class="mt-2">กำลังโหลดข้อมูล...</p>
+                </div>`;
+        }
 
         const result = await apiCall('GET', 'getDraftRequest', { 
             requestId: requestId, 
@@ -1321,13 +1565,14 @@ function ensureEditAccess(requestId) {
 async function generateDocumentFromDraft() {
     console.log("=== generateDocumentFromDraft START ===");
     
-    let requestId = document.getElementById('edit-request-id').value;
-    const draftId = document.getElementById('edit-draft-id').value;
+    let requestId = document.getElementById('edit-request-id')?.value;
+    const draftId = document.getElementById('edit-draft-id')?.value;
     
     if (!requestId) {
         requestId = sessionStorage.getItem('currentEditRequestId');
         if (requestId) {
-            document.getElementById('edit-request-id').value = requestId;
+            const requestIdInput = document.getElementById('edit-request-id');
+            if (requestIdInput) requestIdInput.value = requestId;
             console.log("Retrieved requestId from sessionStorage:", requestId);
         }
     }
@@ -1357,29 +1602,26 @@ async function generateDocumentFromDraft() {
     toggleLoader('generate-document-button', true);
     
     try {
-        let result;
-        
-        try {
-            result = await apiCall('POST', 'updateRequest', formData);
-            console.log("updateRequest result:", result);
-        } catch (updateError) {
-            console.log("updateRequest failed, trying createRequest with isEdit flag:", updateError);
-            result = await apiCall('POST', 'createRequest', formData);
-            console.log("createRequest with isEdit result:", result);
-        }
+        const result = await apiCall('POST', 'updateRequest', formData);
+        console.log("updateRequest result:", result);
         
         if (result.status === 'success') {
-            document.getElementById('edit-result-title').textContent = 'อัพเดทเอกสารสำเร็จ!';
-            document.getElementById('edit-result-message').textContent = `บันทึกข้อความสำหรับ ID ${result.data.id || requestId} ถูกอัพเดทแล้ว`;
+            const resultTitle = document.getElementById('edit-result-title');
+            const resultMessage = document.getElementById('edit-result-message');
+            const resultLink = document.getElementById('edit-result-link');
+            const editResult = document.getElementById('edit-result');
             
-            if (result.data.pdfUrl) {
-                document.getElementById('edit-result-link').href = result.data.pdfUrl;
-                document.getElementById('edit-result-link').classList.remove('hidden');
-            } else {
-                document.getElementById('edit-result-link').classList.add('hidden');
+            if (resultTitle) resultTitle.textContent = 'อัพเดทเอกสารสำเร็จ!';
+            if (resultMessage) resultMessage.textContent = `บันทึกข้อความสำหรับ ID ${result.data.id || requestId} ถูกอัพเดทแล้ว`;
+            
+            if (result.data.pdfUrl && resultLink) {
+                resultLink.href = result.data.pdfUrl;
+                resultLink.classList.remove('hidden');
+            } else if (resultLink) {
+                resultLink.classList.add('hidden');
             }
             
-            document.getElementById('edit-result').classList.remove('hidden');
+            if (editResult) editResult.classList.remove('hidden');
             
             clearRequestsCache();
             await fetchUserRequests();
@@ -1404,7 +1646,7 @@ async function generateDocumentFromDraft() {
 // ✅ ฟังก์ชันบันทึกข้อมูลคำขอ (Draft)
 async function saveDraft() {
     const formData = getEditFormData();
-    const requestId = document.getElementById('edit-request-id').value;
+    const requestId = document.getElementById('edit-request-id')?.value;
     
     if (!validateEditForm(formData)) {
         return;
@@ -1418,9 +1660,12 @@ async function saveDraft() {
         const result = await apiCall('POST', 'saveDraftRequest', formData);
         
         if (result.status === 'success') {
-            document.getElementById('edit-draft-id').value = result.data.draftId || '';
-            if (result.data.requestId) {
-                document.getElementById('edit-request-id').value = result.data.requestId;
+            const draftIdInput = document.getElementById('edit-draft-id');
+            const requestIdInput = document.getElementById('edit-request-id');
+            
+            if (draftIdInput) draftIdInput.value = result.data.draftId || '';
+            if (result.data.requestId && requestIdInput) {
+                requestIdInput.value = result.data.requestId;
             }
             showAlert("สำเร็จ", formData.isEdit ? "อัพเดทข้อมูลคำขอเรียบร้อยแล้ว" : "บันทึกข้อมูลคำขอเรียบร้อยแล้ว");
         } else {
@@ -1437,13 +1682,14 @@ async function saveDraft() {
 // ✅ ฟังก์ชันดึงข้อมูลจากฟอร์มแก้ไข
 function getEditFormData() {
     try {
-        let requestId = document.getElementById('edit-request-id').value;
-        const draftId = document.getElementById('edit-draft-id').value;
+        let requestId = document.getElementById('edit-request-id')?.value;
+        const draftId = document.getElementById('edit-draft-id')?.value;
         
         if (!requestId) {
             requestId = sessionStorage.getItem('currentEditRequestId');
             if (requestId) {
-                document.getElementById('edit-request-id').value = requestId;
+                const requestIdInput = document.getElementById('edit-request-id');
+                if (requestIdInput) requestIdInput.value = requestId;
             }
         }
         
@@ -1467,7 +1713,8 @@ function getEditFormData() {
             document.querySelectorAll('input[name="edit-expense_item"]:checked').forEach(chk => {
                 const item = { name: chk.dataset.itemName };
                 if (item.name === 'ค่าใช้จ่ายอื่นๆ') {
-                    item.detail = document.getElementById('edit-expense_other_text').value.trim();
+                    const otherText = document.getElementById('edit-expense_other_text');
+                    if (otherText) item.detail = otherText.value.trim();
                 }
                 expenseItems.push(item);
             });
@@ -1508,22 +1755,22 @@ function getEditFormData() {
             draftId: draftId || '',
             requestId: requestId || '',
             username: user.username,
-            docDate: document.getElementById('edit-doc-date').value,
-            requesterName: document.getElementById('edit-requester-name').value.trim(),
-            requesterPosition: document.getElementById('edit-requester-position').value.trim(),
-            location: document.getElementById('edit-location').value.trim(),
-            purpose: document.getElementById('edit-purpose').value.trim(),
-            startDate: document.getElementById('edit-start-date').value,
-            endDate: document.getElementById('edit-end-date').value,
+            docDate: document.getElementById('edit-doc-date')?.value || '',
+            requesterName: document.getElementById('edit-requester-name')?.value.trim() || '',
+            requesterPosition: document.getElementById('edit-requester-position')?.value.trim() || '',
+            location: document.getElementById('edit-location')?.value.trim() || '',
+            purpose: document.getElementById('edit-purpose')?.value.trim() || '',
+            startDate: document.getElementById('edit-start-date')?.value || '',
+            endDate: document.getElementById('edit-end-date')?.value || '',
             attendees: attendees,
             expenseOption: expenseOption ? expenseOption.value : 'no',
             expenseItems: expenseItems,
-            totalExpense: document.getElementById('edit-total-expense').value || 0,
+            totalExpense: document.getElementById('edit-total-expense')?.value || 0,
             // ✅ ใช้ข้อมูลพาหนะแบบใหม่แทน vehicleOption เดิม
             vehicleOptions: vehicleData.vehicleOptions,
             vehicleDetails: vehicleData.vehicleDetails,
-            department: document.getElementById('edit-department').value,
-            headName: document.getElementById('edit-head-name').value,
+            department: document.getElementById('edit-department')?.value || '',
+            headName: document.getElementById('edit-head-name')?.value || '',
             isEdit: true
         };
 
@@ -1606,29 +1853,6 @@ function validateEditForm(formData) {
     return true;
 }
 
-// ✅ ฟังก์ชันรีเซ็ตหน้าแก้ไข
-function resetEditPage() {
-    console.log("🧹 Resetting edit page...");
-    
-    // รีเซ็ตฟอร์ม
-    document.getElementById('edit-request-form').reset();
-    document.getElementById('edit-attendees-list').innerHTML = '';
-    document.getElementById('edit-result').classList.add('hidden');
-    
-    // ล้างข้อมูลชั่วคราว
-    sessionStorage.removeItem('currentEditRequestId');
-    document.getElementById('edit-request-id').value = '';
-    document.getElementById('edit-draft-id').value = '';
-    
-    // รีเซ็ตค่าเริ่มต้น
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('edit-doc-date').value = today;
-    document.getElementById('edit-start-date').value = today;
-    document.getElementById('edit-end-date').value = today;
-    
-    console.log("✅ Edit page reset complete");
-}
-
 // ✅ ฟังก์ชันแสดง/ซ่อน loading state
 function showEditPageLoading(show) {
     const loadingElement = document.getElementById('edit-loading');
@@ -1677,6 +1901,7 @@ function enhanceEditFunctionSafety() {
     
     console.log('✅ Edit function safety check completed');
 }
+
 // ==================== VEHICLE MULTIPLE SELECTION FUNCTIONS ====================
 
 // ✅ ฟังก์ชันจัดการการเลือกพาหนะในฟอร์มสร้างคำขอ
@@ -1714,12 +1939,14 @@ function togglePrivateVehicleDetails() {
     const licensePlateInput = document.getElementById('form-license-plate');
     
     if (this.checked) {
-        privateDetails.classList.remove('hidden');
-        licensePlateInput.required = true;
+        if (privateDetails) privateDetails.classList.remove('hidden');
+        if (licensePlateInput) licensePlateInput.required = true;
     } else {
-        privateDetails.classList.add('hidden');
-        licensePlateInput.required = false;
-        licensePlateInput.value = '';
+        if (privateDetails) privateDetails.classList.add('hidden');
+        if (licensePlateInput) {
+            licensePlateInput.required = false;
+            licensePlateInput.value = '';
+        }
     }
 }
 
@@ -1729,12 +1956,14 @@ function togglePublicVehicleDetails() {
     const otherVehicleInput = document.getElementById('form-other-vehicle');
     
     if (this.checked) {
-        publicDetails.classList.remove('hidden');
-        otherVehicleInput.required = true;
+        if (publicDetails) publicDetails.classList.remove('hidden');
+        if (otherVehicleInput) otherVehicleInput.required = true;
     } else {
-        publicDetails.classList.add('hidden');
-        otherVehicleInput.required = false;
-        otherVehicleInput.value = '';
+        if (publicDetails) publicDetails.classList.add('hidden');
+        if (otherVehicleInput) {
+            otherVehicleInput.required = false;
+            otherVehicleInput.value = '';
+        }
     }
 }
 
@@ -1744,12 +1973,14 @@ function toggleEditPrivateVehicleDetails() {
     const licensePlateInput = document.getElementById('edit-license-plate');
     
     if (this.checked) {
-        privateDetails.classList.remove('hidden');
-        licensePlateInput.required = true;
+        if (privateDetails) privateDetails.classList.remove('hidden');
+        if (licensePlateInput) licensePlateInput.required = true;
     } else {
-        privateDetails.classList.add('hidden');
-        licensePlateInput.required = false;
-        licensePlateInput.value = '';
+        if (privateDetails) privateDetails.classList.add('hidden');
+        if (licensePlateInput) {
+            licensePlateInput.required = false;
+            licensePlateInput.value = '';
+        }
     }
 }
 
@@ -1759,12 +1990,14 @@ function toggleEditPublicVehicleDetails() {
     const otherVehicleInput = document.getElementById('edit-other-vehicle');
     
     if (this.checked) {
-        publicDetails.classList.remove('hidden');
-        otherVehicleInput.required = true;
+        if (publicDetails) publicDetails.classList.remove('hidden');
+        if (otherVehicleInput) otherVehicleInput.required = true;
     } else {
-        publicDetails.classList.add('hidden');
-        otherVehicleInput.required = false;
-        otherVehicleInput.value = '';
+        if (publicDetails) publicDetails.classList.add('hidden');
+        if (otherVehicleInput) {
+            otherVehicleInput.required = false;
+            otherVehicleInput.value = '';
+        }
     }
 }
 
@@ -1780,12 +2013,14 @@ function getVehicleDataFromForm() {
     
     if (document.getElementById('vehicle_private')?.checked) {
         selectedVehicles.push('private');
-        vehicleDetails.licensePlate = document.getElementById('form-license-plate').value.trim();
+        const licensePlate = document.getElementById('form-license-plate');
+        if (licensePlate) vehicleDetails.licensePlate = licensePlate.value.trim();
     }
     
     if (document.getElementById('vehicle_public')?.checked) {
         selectedVehicles.push('public');
-        vehicleDetails.otherVehicle = document.getElementById('form-other-vehicle').value.trim();
+        const otherVehicle = document.getElementById('form-other-vehicle');
+        if (otherVehicle) vehicleDetails.otherVehicle = otherVehicle.value.trim();
     }
     
     return {
@@ -1806,12 +2041,14 @@ function getEditVehicleDataFromForm() {
     
     if (document.getElementById('edit-vehicle_private')?.checked) {
         selectedVehicles.push('private');
-        vehicleDetails.licensePlate = document.getElementById('edit-license-plate').value.trim();
+        const licensePlate = document.getElementById('edit-license-plate');
+        if (licensePlate) vehicleDetails.licensePlate = licensePlate.value.trim();
     }
     
     if (document.getElementById('edit-vehicle_public')?.checked) {
         selectedVehicles.push('public');
-        vehicleDetails.otherVehicle = document.getElementById('edit-other-vehicle').value.trim();
+        const otherVehicle = document.getElementById('edit-other-vehicle');
+        if (otherVehicle) vehicleDetails.otherVehicle = otherVehicle.value.trim();
     }
     
     return {
@@ -1830,8 +2067,11 @@ function fillEditVehicleData(requestData) {
     });
     
     // ซ่อนรายละเอียดทั้งหมด
-    document.getElementById('edit-private-vehicle-details').classList.add('hidden');
-    document.getElementById('edit-public-vehicle-details').classList.add('hidden');
+    const privateDetails = document.getElementById('edit-private-vehicle-details');
+    const publicDetails = document.getElementById('edit-public-vehicle-details');
+    
+    if (privateDetails) privateDetails.classList.add('hidden');
+    if (publicDetails) publicDetails.classList.add('hidden');
     
     // เติมข้อมูลพาหนะ
     if (requestData.vehicleOptions && Array.isArray(requestData.vehicleOptions)) {
@@ -1842,16 +2082,18 @@ function fillEditVehicleData(requestData) {
                 
                 // แสดงรายละเอียดถ้าจำเป็น
                 if (option === 'private') {
-                    document.getElementById('edit-private-vehicle-details').classList.remove('hidden');
+                    if (privateDetails) privateDetails.classList.remove('hidden');
                     if (requestData.vehicleDetails?.licensePlate) {
-                        document.getElementById('edit-license-plate').value = requestData.vehicleDetails.licensePlate;
+                        const licensePlate = document.getElementById('edit-license-plate');
+                        if (licensePlate) licensePlate.value = requestData.vehicleDetails.licensePlate;
                     }
                 }
                 
                 if (option === 'public') {
-                    document.getElementById('edit-public-vehicle-details').classList.remove('hidden');
+                    if (publicDetails) publicDetails.classList.remove('hidden');
                     if (requestData.vehicleDetails?.otherVehicle) {
-                        document.getElementById('edit-other-vehicle').value = requestData.vehicleDetails.otherVehicle;
+                        const otherVehicle = document.getElementById('edit-other-vehicle');
+                        if (otherVehicle) otherVehicle.value = requestData.vehicleDetails.otherVehicle;
                     }
                 }
             }
@@ -1864,8 +2106,9 @@ function fillEditVehicleData(requestData) {
             oldCheckbox.checked = true;
             
             if (oldVehicleOption === 'private' && requestData.licensePlate) {
-                document.getElementById('edit-private-vehicle-details').classList.remove('hidden');
-                document.getElementById('edit-license-plate').value = requestData.licensePlate;
+                if (privateDetails) privateDetails.classList.remove('hidden');
+                const licensePlate = document.getElementById('edit-license-plate');
+                if (licensePlate) licensePlate.value = requestData.licensePlate;
             }
         }
     }
@@ -1900,6 +2143,7 @@ function formatVehicleDisplay(vehicleData) {
     
     return displayText;
 }
+
 // ✅ ฟังก์ชันตรวจสอบสถานะการแก้ไข
 function checkEditPageStatus() {
     console.log("🔍 Edit Page Status Check:");
@@ -1910,12 +2154,14 @@ function checkEditPageStatus() {
     console.log("- edit form element:", document.getElementById('edit-request-form'));
     console.log("- setupEditPageEventListeners function:", typeof setupEditPageEventListeners);
 }
+
 // ✅ ทำให้ฟังก์ชันพาหนะสามารถเรียกใช้จาก global scope ได้
 window.setupVehicleMultipleSelection = setupVehicleMultipleSelection;
 window.getVehicleDataFromForm = getVehicleDataFromForm;
 window.getEditVehicleDataFromForm = getEditVehicleDataFromForm;
 window.fillEditVehicleData = fillEditVehicleData;
 window.formatVehicleDisplay = formatVehicleDisplay;
+
 // ✅ ทำให้ฟังก์ชันสามารถเรียกใช้จาก global scope ได้
 window.openEditPage = openEditPage;
 window.openEditPageDirect = openEditPageDirect;
@@ -1926,37 +2172,37 @@ window.addEditAttendeeField = addEditAttendeeField;
 window.toggleEditExpenseOptions = toggleEditExpenseOptions;
 window.toggleEditVehicleOptions = toggleEditVehicleOptions;
 
-// 🔧 เรียกใช้เมื่อโหลดหน้าเพื่อตรวจสอบ
-document.addEventListener('DOMContentLoaded', function() {
-    console.log("🚀 Edit page functions loaded");
-    enhanceEditFunctionSafety();
-});
-
 // --- PROFILE FUNCTIONS ---
 
 function loadProfileData() {
     const user = getCurrentUser();
     if (!user) return;
 
-    document.getElementById('profile-fullname').value = user.fullName || '';
-    document.getElementById('profile-email').value = user.email || '';
-    document.getElementById('profile-position').value = user.position || '';
-    document.getElementById('profile-department').value = user.department || '';
-    document.getElementById('profile-username').value = user.username || '';
+    const profileFullname = document.getElementById('profile-fullname');
+    const profileEmail = document.getElementById('profile-email');
+    const profilePosition = document.getElementById('profile-position');
+    const profileDepartment = document.getElementById('profile-department');
+    const profileUsername = document.getElementById('profile-username');
+    
+    if (profileFullname) profileFullname.value = user.fullName || '';
+    if (profileEmail) profileEmail.value = user.email || '';
+    if (profilePosition) profilePosition.value = user.position || '';
+    if (profileDepartment) profileDepartment.value = user.department || '';
+    if (profileUsername) profileUsername.value = user.username || '';
 }
 
 async function handleProfileUpdate(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
     const user = getCurrentUser();
     if (!user) return;
 
     const formData = {
         username: user.username,
-        fullName: document.getElementById('profile-fullname').value,
-        email: document.getElementById('profile-email').value.trim(),
-        position: document.getElementById('profile-position').value,
-        department: document.getElementById('profile-department').value
+        fullName: document.getElementById('profile-fullname')?.value || '',
+        email: document.getElementById('profile-email')?.value.trim() || '',
+        position: document.getElementById('profile-position')?.value || '',
+        department: document.getElementById('profile-department')?.value || ''
     };
 
     toggleLoader('profile-submit-button', true);
@@ -1981,15 +2227,15 @@ async function handleProfileUpdate(e) {
 }
 
 async function handlePasswordUpdate(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
     const user = getCurrentUser();
     if (!user) return;
 
     const formData = {
         username: user.username,
-        oldPassword: document.getElementById('current-password').value,
-        newPassword: document.getElementById('new-password').value
+        oldPassword: document.getElementById('current-password')?.value || '',
+        newPassword: document.getElementById('new-password')?.value || ''
     };
 
     if (!formData.oldPassword || !formData.newPassword) {
@@ -2004,7 +2250,8 @@ async function handlePasswordUpdate(e) {
         
         if (result.status === 'success') {
             showAlert('สำเร็จ', 'เปลี่ยนรหัสผ่านสำเร็จ');
-            document.getElementById('password-form').reset();
+            const passwordForm = document.getElementById('password-form');
+            if (passwordForm) passwordForm.reset();
         } else {
             showAlert('ผิดพลาด', result.message);
         }
@@ -2016,10 +2263,13 @@ async function handlePasswordUpdate(e) {
 }
 
 function togglePasswordVisibility() {
-    const showPassword = document.getElementById('show-password-toggle').checked;
+    const showPasswordToggle = document.getElementById('show-password-toggle');
     const currentPassword = document.getElementById('current-password');
     const newPassword = document.getElementById('new-password');
     
+    if (!showPasswordToggle || !currentPassword || !newPassword) return;
+    
+    const showPassword = showPasswordToggle.checked;
     currentPassword.type = showPassword ? 'text' : 'password';
     newPassword.type = showPassword ? 'text' : 'password';
 }
@@ -2031,9 +2281,13 @@ async function fetchUserRequests() {
         const user = getCurrentUser();
         if (!user) return;
 
-        document.getElementById('requests-loader').classList.remove('hidden');
-        document.getElementById('requests-list').classList.add('hidden');
-        document.getElementById('no-requests-message').classList.add('hidden');
+        const requestsLoader = document.getElementById('requests-loader');
+        const requestsList = document.getElementById('requests-list');
+        const noRequestsMessage = document.getElementById('no-requests-message');
+        
+        if (requestsLoader) requestsLoader.classList.remove('hidden');
+        if (requestsList) requestsList.classList.add('hidden');
+        if (noRequestsMessage) noRequestsMessage.classList.add('hidden');
 
         const [requestsResult, memosResult] = await Promise.all([
             apiCall('GET', 'getUserRequests', { username: user.username }),
@@ -2041,7 +2295,7 @@ async function fetchUserRequests() {
         ]);
         
         if (requestsResult.status === 'success') {
-            allRequestsCache = requestsResult.data;
+            allRequestsCache = requestsResult.data || [];
             userMemosCache = memosResult.data || [];
             renderRequestsList(allRequestsCache, userMemosCache);
         }
@@ -2049,13 +2303,16 @@ async function fetchUserRequests() {
         console.error('Error fetching requests:', error);
         showAlert('ผิดพลาด', 'ไม่สามารถโหลดข้อมูลคำขอได้');
     } finally {
-        document.getElementById('requests-loader').classList.add('hidden');
+        const requestsLoader = document.getElementById('requests-loader');
+        if (requestsLoader) requestsLoader.classList.add('hidden');
     }
 }
 
 function renderRequestsList(requests, memos, searchTerm = '') {
     const container = document.getElementById('requests-list');
     const noRequestsMessage = document.getElementById('no-requests-message');
+    
+    if (!container || !noRequestsMessage) return;
     
     if (!requests || requests.length === 0) {
         container.classList.add('hidden');
@@ -2197,6 +2454,7 @@ function renderRequestsList(requests, memos, searchTerm = '') {
     container.classList.remove('hidden');
     noRequestsMessage.classList.add('hidden');
 
+    // Add event listeners to action buttons
     container.addEventListener('click', handleRequestAction);
 }
 
@@ -2223,7 +2481,6 @@ async function handleRequestAction(e) {
 
     const requestId = button.dataset.id;
     const action = button.dataset.action;
-    const user = getCurrentUser();
 
     console.log("Action triggered:", action, "Request ID:", requestId);
 
@@ -2236,9 +2493,9 @@ async function handleRequestAction(e) {
         await handleDeleteRequest(requestId);
         
     } else if (action === 'send-memo') {
-    console.log("📤 Opening send memo modal for:", requestId);
-    openSendMemoModal(requestId);
-}
+        console.log("📤 Opening send memo modal for:", requestId);
+        openSendMemoModal(requestId);
+    }
 }
 
 // ✅ ฟังก์ชันลบคำขอ
@@ -2290,33 +2547,58 @@ async function handleDeleteRequest(requestId) {
 // --- BASIC FORM FUNCTIONS ---
 
 async function resetRequestForm() {
-    document.getElementById('request-form').reset();
-    document.getElementById('form-request-id').value = '';
-    document.getElementById('form-attendees-list').innerHTML = '';
-    document.getElementById('form-result').classList.add('hidden');
+    const requestForm = document.getElementById('request-form');
+    const formRequestId = document.getElementById('form-request-id');
+    const formAttendeesList = document.getElementById('form-attendees-list');
+    const formResult = document.getElementById('form-result');
     
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('form-doc-date').value = today;
-    document.getElementById('form-start-date').value = today;
-    document.getElementById('form-end-date').value = today;
+    if (requestForm) requestForm.reset();
+    if (formRequestId) formRequestId.value = '';
+    if (formAttendeesList) formAttendeesList.innerHTML = '';
+    if (formResult) formResult.classList.add('hidden');
+    
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    
+    const formDocDate = document.getElementById('form-doc-date');
+    const formStartDate = document.getElementById('form-start-date');
+    const formEndDate = document.getElementById('form-end-date');
+    
+    if (formDocDate) formDocDate.value = `${yyyy}-${mm}-${dd}`;
+    if (formStartDate) formStartDate.value = `${yyyy}-${mm}-${dd}`;
+    if (formEndDate) formEndDate.value = `${yyyy}-${mm}-${dd}`;
     
     // ✅ รีเซ็ตข้อมูลพาหนะ
     document.querySelectorAll('input[name="vehicle_option"]').forEach(checkbox => {
         checkbox.checked = false;
     });
-    document.getElementById('private-vehicle-details').classList.add('hidden');
-    document.getElementById('public-vehicle-details').classList.add('hidden');
-    document.getElementById('form-license-plate').value = '';
-    document.getElementById('form-other-vehicle').value = '';
     
-    document.getElementById('form-department').addEventListener('change', (e) => {
-        const selectedDept = e.target.value;
-        document.getElementById('form-head-name').value = specialPositionMap[selectedDept] || '';
-    });
+    const privateVehicleDetails = document.getElementById('private-vehicle-details');
+    const publicVehicleDetails = document.getElementById('public-vehicle-details');
+    const formLicensePlate = document.getElementById('form-license-plate');
+    const formOtherVehicle = document.getElementById('form-other-vehicle');
+    
+    if (privateVehicleDetails) privateVehicleDetails.classList.add('hidden');
+    if (publicVehicleDetails) publicVehicleDetails.classList.add('hidden');
+    if (formLicensePlate) formLicensePlate.value = '';
+    if (formOtherVehicle) formOtherVehicle.value = '';
+    
+    const formDepartment = document.getElementById('form-department');
+    if (formDepartment) {
+        formDepartment.addEventListener('change', (e) => {
+            const selectedDept = e.target.value;
+            const headNameInput = document.getElementById('form-head-name');
+            if (headNameInput) headNameInput.value = specialPositionMap[selectedDept] || '';
+        });
+    }
 }
 
 function addAttendeeField() {
     const list = document.getElementById('form-attendees-list');
+    if (!list) return;
+    
     const attendeeDiv = document.createElement('div');
     attendeeDiv.className = 'grid grid-cols-1 md:grid-cols-3 gap-2 items-center mb-2';
     attendeeDiv.innerHTML = `
@@ -2351,26 +2633,40 @@ function addAttendeeField() {
 function toggleExpenseOptions() {
     const partialOptions = document.getElementById('partial-expense-options');
     const totalContainer = document.getElementById('total-expense-container');
-    if (document.getElementById('expense_partial').checked) {
-        partialOptions.classList.remove('hidden');
-        totalContainer.classList.remove('hidden');
+    
+    const expensePartial = document.getElementById('expense_partial');
+    
+    if (expensePartial?.checked) {
+        if (partialOptions) partialOptions.classList.remove('hidden');
+        if (totalContainer) totalContainer.classList.remove('hidden');
     } else {
-        partialOptions.classList.add('hidden');
-        totalContainer.classList.add('hidden');
+        if (partialOptions) partialOptions.classList.add('hidden');
+        if (totalContainer) totalContainer.classList.add('hidden');
     }
 }
 
 function toggleVehicleOptions() {
     const privateDetails = document.getElementById('private-vehicle-details');
-    if (document.getElementById('vehicle_private').checked) {
-        privateDetails.classList.remove('hidden');
+    const publicDetails = document.getElementById('public-vehicle-details');
+    
+    const vehiclePrivate = document.getElementById('vehicle_private');
+    const vehiclePublic = document.getElementById('vehicle_public');
+    
+    if (vehiclePrivate?.checked) {
+        if (privateDetails) privateDetails.classList.remove('hidden');
     } else {
-        privateDetails.classList.add('hidden');
+        if (privateDetails) privateDetails.classList.add('hidden');
+    }
+    
+    if (vehiclePublic?.checked) {
+        if (publicDetails) publicDetails.classList.remove('hidden');
+    } else {
+        if (publicDetails) publicDetails.classList.add('hidden');
     }
 }
 
 async function handleRequestFormSubmit(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
     const user = getCurrentUser();
     if (!user) {
@@ -2389,32 +2685,33 @@ async function handleRequestFormSubmit(e) {
 
     const formData = {
         username: user.username,
-        docDate: document.getElementById('form-doc-date').value,
-        requesterName: document.getElementById('form-requester-name').value,
-        requesterPosition: document.getElementById('form-requester-position').value,
-        location: document.getElementById('form-location').value,
-        purpose: document.getElementById('form-purpose').value,
-        startDate: document.getElementById('form-start-date').value,
-        endDate: document.getElementById('form-end-date').value,
+        docDate: document.getElementById('form-doc-date')?.value || '',
+        requesterName: document.getElementById('form-requester-name')?.value || '',
+        requesterPosition: document.getElementById('form-requester-position')?.value || '',
+        location: document.getElementById('form-location')?.value || '',
+        purpose: document.getElementById('form-purpose')?.value || '',
+        startDate: document.getElementById('form-start-date')?.value || '',
+        endDate: document.getElementById('form-end-date')?.value || '',
         attendees: Array.from(document.querySelectorAll('#form-attendees-list > div')).map(div => {
             const select = div.querySelector('.attendee-position-select');
-            let position = select.value;
+            let position = select ? select.value : '';
             if (position === 'other') {
-                position = div.querySelector('.attendee-position-other').value;
+                const otherInput = div.querySelector('.attendee-position-other');
+                position = otherInput ? otherInput.value : '';
             }
             return {
-                name: div.querySelector('.attendee-name').value,
+                name: div.querySelector('.attendee-name')?.value || '',
                 position: position
             };
         }).filter(att => att.name && att.position),
-        expenseOption: document.querySelector('input[name="expense_option"]:checked').value,
+        expenseOption: document.querySelector('input[name="expense_option"]:checked')?.value || 'no',
         expenseItems: [],
-        totalExpense: document.getElementById('form-total-expense').value || 0,
+        totalExpense: document.getElementById('form-total-expense')?.value || 0,
         // ✅ ใช้ข้อมูลพาหนะแบบใหม่แทน vehicleOption เดิม
         vehicleOptions: vehicleData.vehicleOptions,
         vehicleDetails: vehicleData.vehicleDetails,
-        department: document.getElementById('form-department').value,
-        headName: document.getElementById('form-head-name').value,
+        department: document.getElementById('form-department')?.value || '',
+        headName: document.getElementById('form-head-name')?.value || '',
         isEdit: false
     };
 
@@ -2422,7 +2719,8 @@ async function handleRequestFormSubmit(e) {
         document.querySelectorAll('input[name="expense_item"]:checked').forEach(chk => {
             const item = { name: chk.dataset.itemName };
             if (item.name === 'ค่าใช้จ่ายอื่นๆ') {
-                item.detail = document.getElementById('expense_other_text').value;
+                const otherText = document.getElementById('expense_other_text');
+                if (otherText) item.detail = otherText.value;
             }
             formData.expenseItems.push(item);
         });
@@ -2434,13 +2732,24 @@ async function handleRequestFormSubmit(e) {
         const result = await apiCall('POST', 'createRequest', formData);
         
         if (result.status === 'success') {
-            document.getElementById('form-result-title').textContent = 'สร้างเอกสารสำเร็จ!';
-            document.getElementById('form-result-message').textContent = `บันทึกข้อความสำหรับ ID ${result.data.id} ถูกสร้างแล้ว`;
-            document.getElementById('form-result-link').href = result.data.pdfUrl;
-            document.getElementById('form-result').classList.remove('hidden');
+            const formResultTitle = document.getElementById('form-result-title');
+            const formResultMessage = document.getElementById('form-result-message');
+            const formResultLink = document.getElementById('form-result-link');
+            const formResult = document.getElementById('form-result');
             
-            document.getElementById('request-form').reset();
-            document.getElementById('form-attendees-list').innerHTML = '';
+            if (formResultTitle) formResultTitle.textContent = 'สร้างเอกสารสำเร็จ!';
+            if (formResultMessage) formResultMessage.textContent = `บันทึกข้อความสำหรับ ID ${result.data.id} ถูกสร้างแล้ว`;
+            if (formResultLink) {
+                formResultLink.href = result.data.pdfUrl;
+                formResultLink.classList.remove('hidden');
+            }
+            if (formResult) formResult.classList.remove('hidden');
+            
+            const requestForm = document.getElementById('request-form');
+            const formAttendeesList = document.getElementById('form-attendees-list');
+            
+            if (requestForm) requestForm.reset();
+            if (formAttendeesList) formAttendeesList.innerHTML = '';
             
             clearRequestsCache();
             await fetchUserRequests();
@@ -2465,7 +2774,7 @@ async function fetchAllUsers() {
 
         const result = await apiCall('GET', 'getAllUsers');
         if (result.status === 'success') {
-            allUsersCache = result.data;
+            allUsersCache = result.data || [];
             renderUsersList(allUsersCache);
         }
     } catch (error) {
@@ -2476,6 +2785,7 @@ async function fetchAllUsers() {
 
 function renderUsersList(users) {
     const container = document.getElementById('users-content');
+    if (!container) return;
     
     if (!users || users.length === 0) {
         container.innerHTML = '<p class="text-center text-gray-500">ไม่พบข้อมูลผู้ใช้</p>';
@@ -2530,17 +2840,23 @@ async function deleteUser(username) {
 }
 
 function openAddUserModal() {
-    document.getElementById('register-modal').style.display = 'flex';
+    const modal = document.getElementById('register-modal');
+    if (modal) modal.style.display = 'flex';
 }
 
 function downloadUserTemplate() {
     const template = [
         ['Username', 'Password', 'FullName', 'Email', 'Position', 'Department', 'Role', 'SpecialPosition']
     ];
-    const ws = XLSX.utils.aoa_to_sheet(template);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.writeFile(wb, 'user_template.xlsx');
+    
+    if (typeof XLSX !== 'undefined') {
+        const ws = XLSX.utils.aoa_to_sheet(template);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Template');
+        XLSX.writeFile(wb, 'user_template.xlsx');
+    } else {
+        showAlert('ผิดพลาด', 'ไม่สามารถดาวน์โหลดเทมเพลตได้ กรุณาตรวจสอบไลบรารี XLSX');
+    }
 }
 
 async function handleUserImport(e) {
@@ -2548,6 +2864,10 @@ async function handleUserImport(e) {
     if (!file) return;
 
     try {
+        if (typeof XLSX === 'undefined') {
+            throw new Error('XLSX library not available');
+        }
+        
         const data = await file.arrayBuffer();
         const workbook = XLSX.read(data);
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -2571,7 +2891,7 @@ async function handleUserImport(e) {
 // --- MEMO FUNCTIONS ---
 
 async function handleMemoSubmitFromModal(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
     const user = getCurrentUser();
     if (!user) {
@@ -2579,8 +2899,8 @@ async function handleMemoSubmitFromModal(e) {
         return;
     }
 
-    const requestId = document.getElementById('memo-modal-request-id').value;
-    const memoType = document.querySelector('input[name="modal_memo_type"]:checked').value;
+    const requestId = document.getElementById('memo-modal-request-id')?.value;
+    const memoType = document.querySelector('input[name="modal_memo_type"]:checked')?.value;
     const fileInput = document.getElementById('modal-memo-file');
     
     if (!requestId) {
@@ -2590,11 +2910,16 @@ async function handleMemoSubmitFromModal(e) {
 
     let fileObject = null;
     if (memoType === 'non_reimburse') {
-        if (fileInput.files.length === 0) {
+        if (!fileInput || fileInput.files.length === 0) {
             showAlert('ผิดพลาด', 'กรุณาเลือกไฟล์บันทึกข้อความสำหรับประเภทไม่เบิกค่าใช้จ่าย');
             return;
         }
-        fileObject = await fileToObject(fileInput.files[0]);
+        try {
+            fileObject = await fileToObject(fileInput.files[0]);
+        } catch (error) {
+            showAlert('ผิดพลาด', 'ไม่สามารถอ่านไฟล์: ' + error.message);
+            return;
+        }
     }
 
     toggleLoader('send-memo-submit-button', true);
@@ -2610,8 +2935,11 @@ async function handleMemoSubmitFromModal(e) {
         
         if (result.status === 'success') {
             showAlert('สำเร็จ', 'ส่งบันทึกข้อความสำเร็จ');
-            document.getElementById('send-memo-modal').style.display = 'none';
-            document.getElementById('send-memo-form').reset();
+            const modal = document.getElementById('send-memo-modal');
+            if (modal) modal.style.display = 'none';
+            
+            const form = document.getElementById('send-memo-form');
+            if (form) form.reset();
             
             clearRequestsCache();
             await fetchUserRequests();
@@ -2705,6 +3033,7 @@ async function loadStatsData() {
 
 function renderStatsOverview(requests, memos, users, currentUser) {
     const container = document.getElementById('stats-overview');
+    if (!container) return;
     
     const stats = calculateStats(requests, memos, users, currentUser);
     
@@ -3033,10 +3362,15 @@ function downloadAttendeeTemplate() {
         ['ตัวอย่าง ผู้ใช้', 'ครู'],
         ['ตัวอย่าง ผู้ใช้2', 'นักเรียน']
     ];
-    const ws = XLSX.utils.aoa_to_sheet(template);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.writeFile(wb, 'attendee_template.xlsx');
+    
+    if (typeof XLSX !== 'undefined') {
+        const ws = XLSX.utils.aoa_to_sheet(template);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Template');
+        XLSX.writeFile(wb, 'attendee_template.xlsx');
+    } else {
+        showAlert('ผิดพลาด', 'ไม่สามารถดาวน์โหลดเทมเพลตได้ กรุณาตรวจสอบไลบรารี XLSX');
+    }
 }
 
 async function handleExcelImport(e) {
@@ -3044,13 +3378,17 @@ async function handleExcelImport(e) {
     if (!file) return;
 
     try {
+        if (typeof XLSX === 'undefined') {
+            throw new Error('XLSX library not available');
+        }
+        
         const data = await file.arrayBuffer();
         const workbook = XLSX.read(data);
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
         const attendeesList = document.getElementById('form-attendees-list');
-        attendeesList.innerHTML = '';
+        if (attendeesList) attendeesList.innerHTML = '';
 
         jsonData.forEach(row => {
             if (row['ชื่อ-นามสกุล'] && row['ตำแหน่ง']) {
@@ -3068,6 +3406,8 @@ async function handleExcelImport(e) {
 
 function addAttendeeFieldWithData(name, position) {
     const list = document.getElementById('form-attendees-list');
+    if (!list) return;
+    
     const attendeeDiv = document.createElement('div');
     attendeeDiv.className = 'grid grid-cols-1 md:grid-cols-3 gap-2 items-center mb-2';
     
@@ -3119,7 +3459,8 @@ async function fetchAllRequestsForCommand() {
 
         const result = await apiCall('GET', 'getAllRequests');
         if (result.status === 'success') {
-            renderAdminRequestsList(result.data);
+            allRequestsCache = result.data || [];
+            renderAdminRequestsList(allRequestsCache);
         }
     } catch (error) {
         console.error('Error fetching requests for command:', error);
@@ -3129,6 +3470,7 @@ async function fetchAllRequestsForCommand() {
 
 function renderAdminRequestsList(requests) {
     const container = document.getElementById('admin-requests-list');
+    if (!container) return;
     
     if (!requests || requests.length === 0) {
         container.innerHTML = '<p class="text-center text-gray-500">ไม่พบคำขอไปราชการ</p>';
@@ -3251,6 +3593,7 @@ async function fetchAllMemos() {
 
 function renderAdminMemosList(memos) {
     const container = document.getElementById('admin-memos-list');
+    if (!container) return;
     
     if (!memos || memos.length === 0) {
         container.innerHTML = '<p class="text-center text-gray-500">ไม่พบบันทึกข้อความ</p>';
@@ -3295,11 +3638,13 @@ function openCommandApproval(requestId) {
         showAlert('ผิดพลาด', 'คุณไม่มีสิทธิ์ใช้งานฟังก์ชันนี้');
         return;
     }
-    document.getElementById('command-request-id').value = requestId;
-    document.getElementById('command-approval-modal').style.display = 'flex';
+    const commandRequestId = document.getElementById('command-request-id');
+    const modal = document.getElementById('command-approval-modal');
+    
+    if (commandRequestId) commandRequestId.value = requestId;
+    if (modal) modal.style.display = 'flex';
 }
 
-// ✅ ฟังก์ชันเปิด Modal ส่งหนังสือส่ง (เวอร์ชันแก้ไข)
 // ✅ ฟังก์ชันเปิด Modal หนังสือส่ง (เวอร์ชันแก้ไข)
 function openDispatchModal(requestId) {
     console.log("🔧 openDispatchModal called with requestId:", requestId);
@@ -3340,9 +3685,13 @@ function openDispatchModal(requestId) {
     yearInput.value = currentYear;
     
     // รีเซ็ตค่าอื่นๆ
-    document.getElementById('dispatch-month').value = '';
-    document.getElementById('command-count').value = '';
-    document.getElementById('memo-count').value = '';
+    const dispatchMonth = document.getElementById('dispatch-month');
+    const commandCount = document.getElementById('command-count');
+    const memoCount = document.getElementById('memo-count');
+    
+    if (dispatchMonth) dispatchMonth.value = '';
+    if (commandCount) commandCount.value = '';
+    if (memoCount) memoCount.value = '';
     
     // แสดง modal
     modal.style.display = 'flex';
@@ -3432,108 +3781,25 @@ function testDispatchModal() {
     // พยายามซ่อมแซม modal
     repairDispatchModal();
 }
-// ✅ ฟังก์ชันตรวจสอบสถานะ Modal หนังสือส่ง
-function checkDispatchModalStatus() {
-    console.log("🔍 Dispatch Modal Status Check:");
-    
-    const modal = document.getElementById('dispatch-modal');
-    const form = document.getElementById('dispatch-form');
-    const requestIdInput = document.getElementById('dispatch-request-id');
-    
-    console.log("Modal element:", modal);
-    console.log("Modal display style:", modal?.style.display);
-    console.log("Modal class list:", modal?.classList);
-    console.log("Form element:", form);
-    console.log("Request ID input:", requestIdInput);
-    
-    // ตรวจสอบ Event Listeners
-    const submitButton = document.getElementById('dispatch-submit-button');
-    console.log("Submit button:", submitButton);
-    
-    if (submitButton) {
-        const hasEventListener = !!submitButton.onclick;
-        console.log("Submit button has click event:", hasEventListener);
-    }
-    
-    // ตรวจสอบปุ่มปิด modal
-    const closeButton = document.getElementById('dispatch-modal-close-button');
-    const cancelButton = document.getElementById('dispatch-cancel-button');
-    console.log("Close button:", closeButton);
-    console.log("Cancel button:", cancelButton);
-}
 
-// ✅ ฟังก์ชันซ่อมแซม Modal หนังสือส่ง
-function repairDispatchModal() {
-    console.log("🔧 Repairing dispatch modal...");
-    
-    const modal = document.getElementById('dispatch-modal');
-    const form = document.getElementById('dispatch-form');
-    
-    if (!modal || !form) {
-        console.error("❌ Modal or form not found");
-        return false;
-    }
-    
-    // ลบ event listeners เดิม
-    const newForm = form.cloneNode(true);
-    form.parentNode.replaceChild(newForm, form);
-    
-    // เพิ่ม event listeners ใหม่
-    document.getElementById('dispatch-form').addEventListener('submit', handleDispatchFormSubmit);
-    
-    // เพิ่ม event listeners สำหรับปุ่มปิด
-    const closeButton = document.getElementById('dispatch-modal-close-button');
-    const cancelButton = document.getElementById('dispatch-cancel-button');
-    
-    if (closeButton) {
-        closeButton.addEventListener('click', () => {
-            document.getElementById('dispatch-modal').style.display = 'none';
-        });
-    }
-    
-    if (cancelButton) {
-        cancelButton.addEventListener('click', () => {
-            document.getElementById('dispatch-modal').style.display = 'none';
-        });
-    }
-    
-    console.log("✅ Dispatch modal repaired successfully");
-    return true;
-}
-// ✅ ฟังก์ชันทดสอบ Modal หนังสือส่ง
-function testDispatchModal() {
-    console.log("🧪 Testing Dispatch Modal...");
-    
-    // ตรวจสอบ element ต่างๆ
-    checkDispatchModalStatus();
-    
-    // พยายามเปิด modal ด้วย requestId ตัวอย่าง
-    const sampleRequest = allRequestsCache[0];
-    if (sampleRequest) {
-        console.log("🔄 Trying to open modal with sample request:", sampleRequest.id);
-        openDispatchModal(sampleRequest.id);
-    } else {
-        console.log("ℹ️ No sample request available for testing");
-    }
-    
-    // พยายามซ่อมแซม modal
-    repairDispatchModal();
-}
 // ฟังก์ชันเปิด Modal จัดการบันทึกข้อความ
 function openAdminMemoAction(memoId) {
     if (!checkAdminAccess()) {
         showAlert('ผิดพลาด', 'คุณไม่มีสิทธิ์ใช้งานฟังก์ชันนี้');
         return;
     }
-    document.getElementById('admin-memo-id').value = memoId;
-    document.getElementById('admin-memo-action-modal').style.display = 'flex';
+    const adminMemoId = document.getElementById('admin-memo-id');
+    const modal = document.getElementById('admin-memo-action-modal');
+    
+    if (adminMemoId) adminMemoId.value = memoId;
+    if (modal) modal.style.display = 'flex';
 }
 
 // ฟังก์ชันอนุมัติคำสั่ง
 async function handleCommandApproval(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
-    const requestId = document.getElementById('command-request-id').value;
+    const requestId = document.getElementById('command-request-id')?.value;
     const commandType = document.querySelector('input[name="command_type"]:checked')?.value;
     
     if (!commandType) {
@@ -3552,8 +3818,11 @@ async function handleCommandApproval(e) {
         
         if (result.status === 'success') {
             showAlert('สำเร็จ', 'สร้างคำสั่งเรียบร้อยแล้ว');
-            document.getElementById('command-approval-modal').style.display = 'none';
-            document.getElementById('command-approval-form').reset();
+            const modal = document.getElementById('command-approval-modal');
+            if (modal) modal.style.display = 'none';
+            
+            const form = document.getElementById('command-approval-form');
+            if (form) form.reset();
             
             clearRequestsCache();
             await fetchAllRequestsForCommand();
@@ -3570,14 +3839,14 @@ async function handleCommandApproval(e) {
 
 // ✅ แก้ไขฟังก์ชัน handleDispatchFormSubmit ให้ถูกต้อง
 async function handleDispatchFormSubmit(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     console.log("📦 handleDispatchFormSubmit called");
     
-    const requestId = document.getElementById('dispatch-request-id').value;
-    const dispatchMonth = document.getElementById('dispatch-month').value;
-    const dispatchYear = document.getElementById('dispatch-year').value;
-    const commandCount = document.getElementById('command-count').value;
-    const memoCount = document.getElementById('memo-count').value;
+    const requestId = document.getElementById('dispatch-request-id')?.value;
+    const dispatchMonth = document.getElementById('dispatch-month')?.value;
+    const dispatchYear = document.getElementById('dispatch-year')?.value;
+    const commandCount = document.getElementById('command-count')?.value;
+    const memoCount = document.getElementById('memo-count')?.value;
 
     console.log("📋 Form data:", {
         requestId, dispatchMonth, dispatchYear, commandCount, memoCount
@@ -3616,8 +3885,11 @@ async function handleDispatchFormSubmit(e) {
         
         if (result.status === 'success') {
             showAlert('สำเร็จ', 'สร้างหนังสือส่งสำเร็จ');
-            document.getElementById('dispatch-modal').style.display = 'none';
-            document.getElementById('dispatch-form').reset();
+            const modal = document.getElementById('dispatch-modal');
+            if (modal) modal.style.display = 'none';
+            
+            const form = document.getElementById('dispatch-form');
+            if (form) form.reset();
             
             // ✅ เปิด PDF ในแท็บใหม่
             if (result.data && result.data.url) {
@@ -3639,27 +3911,32 @@ async function handleDispatchFormSubmit(e) {
 
 // ฟังก์ชันจัดการบันทึกข้อความโดยผู้ดูแลระบบ
 async function handleAdminMemoActionSubmit(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     
-    const memoId = document.getElementById('admin-memo-id').value;
-    const status = document.getElementById('admin-memo-status').value;
+    const memoId = document.getElementById('admin-memo-id')?.value;
+    const status = document.getElementById('admin-memo-status')?.value;
     
-    const completedMemoFile = document.getElementById('admin-completed-memo-file').files[0];
-    const completedCommandFile = document.getElementById('admin-completed-command-file').files[0];
-    const dispatchBookFile = document.getElementById('admin-dispatch-book-file').files[0];
+    const completedMemoFile = document.getElementById('admin-completed-memo-file')?.files[0];
+    const completedCommandFile = document.getElementById('admin-completed-command-file')?.files[0];
+    const dispatchBookFile = document.getElementById('admin-dispatch-book-file')?.files[0];
 
     let completedMemoFileObject = null;
     let completedCommandFileObject = null;
     let dispatchBookFileObject = null;
 
-    if (completedMemoFile) {
-        completedMemoFileObject = await fileToObject(completedMemoFile);
-    }
-    if (completedCommandFile) {
-        completedCommandFileObject = await fileToObject(completedCommandFile);
-    }
-    if (dispatchBookFile) {
-        dispatchBookFileObject = await fileToObject(dispatchBookFile);
+    try {
+        if (completedMemoFile) {
+            completedMemoFileObject = await fileToObject(completedMemoFile);
+        }
+        if (completedCommandFile) {
+            completedCommandFileObject = await fileToObject(completedCommandFile);
+        }
+        if (dispatchBookFile) {
+            dispatchBookFileObject = await fileToObject(dispatchBookFile);
+        }
+    } catch (error) {
+        showAlert('ผิดพลาด', 'ไม่สามารถอ่านไฟล์: ' + error.message);
+        return;
     }
 
     toggleLoader('admin-memo-submit-button', true);
@@ -3675,8 +3952,11 @@ async function handleAdminMemoActionSubmit(e) {
         
         if (result.status === 'success') {
             showAlert('สำเร็จ', 'อัพเดทสถานะและไฟล์เรียบร้อยแล้ว');
-            document.getElementById('admin-memo-action-modal').style.display = 'none';
-            document.getElementById('admin-memo-action-form').reset();
+            const modal = document.getElementById('admin-memo-action-modal');
+            if (modal) modal.style.display = 'none';
+            
+            const form = document.getElementById('admin-memo-action-form');
+            if (form) form.reset();
             await fetchAllMemos();
         } else {
             showAlert('ผิดพลาด', result.message);
@@ -3740,14 +4020,18 @@ async function exportStatsReport() {
             );
         }
 
-        const ws = XLSX.utils.aoa_to_sheet(reportData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'รายงานสถิติการขออนุญาตไปราชการ');
-        
-        const fileName = `รายงานสถิติการขออนุญาตไปราชการ_${new Date().toISOString().split('T')[0]}.xlsx`;
-        XLSX.writeFile(wb, fileName);
+        if (typeof XLSX !== 'undefined') {
+            const ws = XLSX.utils.aoa_to_sheet(reportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'รายงานสถิติการขออนุญาตไปราชการ');
+            
+            const fileName = `รายงานสถิติการขออนุญาตไปราชการ_${new Date().toISOString().split('T')[0]}.xlsx`;
+            XLSX.writeFile(wb, fileName);
 
-        showAlert('สำเร็จ', 'ส่งออกรายงานเรียบร้อยแล้ว');
+            showAlert('สำเร็จ', 'ส่งออกรายงานเรียบร้อยแล้ว');
+        } else {
+            showAlert('ผิดพลาด', 'ไม่สามารถส่งออกรายงานได้ ไลบรารี XLSX ไม่พร้อมใช้งาน');
+        }
 
     } catch (error) {
         console.error('Error exporting stats:', error);
@@ -3807,15 +4091,21 @@ async function openNewRequestForm() {
     try {
         console.log("🆕 เปิดหน้าร่างคำขอใหม่...");
 
-        document.getElementById('form-result').classList.add('hidden');
-        document.getElementById('request-form').reset();
-        document.getElementById('form-attendees-list').innerHTML = '';
+        const formResult = document.getElementById('form-result');
+        const requestForm = document.getElementById('request-form');
+        const formAttendeesList = document.getElementById('form-attendees-list');
+        
+        if (formResult) formResult.classList.add('hidden');
+        if (requestForm) requestForm.reset();
+        if (formAttendeesList) formAttendeesList.innerHTML = '';
 
         const today = new Date();
         const yyyy = today.getFullYear();
         const mm = String(today.getMonth() + 1).padStart(2, '0');
         const dd = String(today.getDate()).padStart(2, '0');
-        document.getElementById('form-doc-date').value = `${yyyy}-${mm}-${dd}`;
+        
+        const formDocDate = document.getElementById('form-doc-date');
+        if (formDocDate) formDocDate.value = `${yyyy}-${mm}-${dd}`;
 
         switchPage('form-page');
 
@@ -3872,16 +4162,39 @@ function tryAutoFillRequester(retry = 0) {
     }
 }
 
-// 🔧 ฟังก์ชันตรวจสอบสถานะการแก้ไข
-function checkEditPageStatus() {
-    console.log("🔍 Edit Page Status Check:");
-    console.log("- currentEditRequestId:", sessionStorage.getItem('currentEditRequestId'));
-    console.log("- openEditPage function:", typeof openEditPage);
-    console.log("- populateEditForm function:", typeof populateEditForm);
-    console.log("- edit page element:", document.getElementById('edit-page'));
+// ✅ ฟังก์ชันเปิด Send Memo Modal
+function openSendMemoModal(requestId) {
+    console.log("📤 Opening send memo modal for:", requestId);
+    
+    if (!requestId) {
+        console.error("❌ No requestId provided");
+        showAlert('ผิดพลาด', 'ไม่พบรหัสคำขอ');
+        return;
+    }
+    
+    const requestIdInput = document.getElementById('memo-modal-request-id');
+    const modal = document.getElementById('send-memo-modal');
+    
+    if (!requestIdInput || !modal) {
+        console.error("❌ Required elements not found");
+        showAlert('ระบบผิดพลาด', 'ไม่พบองค์ประกอบที่จำเป็นในหน้า');
+        return;
+    }
+    
+    // ตั้งค่าข้อมูลในฟอร์ม
+    requestIdInput.value = requestId;
+    
+    // รีเซ็ตฟอร์ม
+    const form = document.getElementById('send-memo-form');
+    if (form) form.reset();
+    
+    // แสดง modal
+    modal.style.display = 'flex';
+    
+    console.log("✅ Send memo modal opened successfully");
 }
 
-// ✅ เพิ่มฟังก์ชันทดสอบระบบหนังสือส่ง
+// ✅ ฟังก์ชันทดสอบระบบหนังสือส่ง
 function testDispatchSystem() {
     console.log("🧪 Testing Dispatch System:");
     
@@ -3902,3 +4215,9 @@ function testDispatchSystem() {
         currentUser: getCurrentUser()
     });
 }
+
+// 🔧 เรียกใช้เมื่อโหลดหน้าเพื่อตรวจสอบ
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("🚀 Edit page functions loaded");
+    enhanceEditFunctionSafety();
+});
