@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Proxy</title>
+</head>
+<body>
+    <script>
+        // Proxy สำหรับเรียก Google Apps Script
+        async function callGAS(method, action, payload = {}) {
+            const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzmMmfyQ1ofO5SOH__MFMr2vTV86D5gyErSQj9HdnnpU_VoHQXNfI8b2FkRJxXNNGyY/exec";
+            
+            try {
+                let url = SCRIPT_URL;
+                const options = {
+                    method: method,
+                    redirect: 'follow'
+                };
+
+                if (method === 'GET') {
+                    const params = new URLSearchParams({ action, ...payload });
+                    url += `?${params}`;
+                } else {
+                    options.body = JSON.stringify({ action, payload });
+                    options.headers = { 'Content-Type': 'text/plain;charset=utf-8' };
+                }
+
+                const response = await fetch(url, options);
+                const result = await response.text();
+                
+                // ส่งผลลัพธ์กลับไปยัง parent window
+                window.parent.postMessage({
+                    type: 'GAS_RESPONSE',
+                    action: action,
+                    result: result
+                }, '*');
+                
+            } catch (error) {
+                window.parent.postMessage({
+                    type: 'GAS_ERROR', 
+                    action: action,
+                    error: error.message
+                }, '*');
+            }
+        }
+
+        // รับคำสั่งจาก parent window
+        window.addEventListener('message', function(event) {
+            if (event.data.type === 'CALL_GAS') {
+                callGAS(event.data.method, event.data.action, event.data.payload);
+            }
+        });
+    </script>
+</body>
+</html>
